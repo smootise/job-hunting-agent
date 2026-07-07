@@ -1,0 +1,25 @@
+[project]
+name = "jobscout"
+version = "0.1.0"
+description = "Local AI agent pipeline for job hunting: collects, scores, and drafts cover letters for Product Manager offers in Île-de-France."
+readme = "README.md"
+authors = [
+    { name = "dahan_t", email = "thibauddahan@yahoo.fr" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "pyyaml>=6.0.3",
+]
+
+[project.scripts]
+jobscout = "jobscout.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.11.2,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.20",
+]

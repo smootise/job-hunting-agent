@@ -1,0 +1,66 @@
+Product Owner Data & IA expérimenté H/F
+
+    Paris, France
+    Temps complet
+    Domaine: Fonctionnel - Projet
+
+Description de l'entreprise
+
+Qui sommes-nous ?
+
+Rejoindre NEXTON, c'est intégrer une entreprise où convergent l'esprit d'un cabinet de conseil, la créativité d'une agence et la dynamique d'une ESN ! Grâce à notre expertise, nous accompagnons des clients grands comptes et des pure players tels que SNCF, Orange, et BNP Paribas dans leurs stratégies d'évolution et d'innovation digitale.
+
+Fondée en 2011, NEXTON réunit aujourd'hui une équipe de plus de 450 experts spécialisés dans le digital, le design, l'agilité, le produit et le développement. Ensemble, ils créent un écosystème riche en connaissances et en compétences diversifiées.
+Description du poste
+
+NEXTON recrute un Product Owner Data & IA expérimenté H/F, en CDI à Paris !
+
+Ton futur environnement de travail :
+
+Tu intègres les équipes d'un de nos clients grands comptes en tant que Product Owner expérimenté pour piloter des produits Data & IA, notamment sur les sujets d'IA génératives. Ces projets ont pour objectif de garantir la fiabilité et de faire évoluer la plateforme Data d'un de nos clients grands comptes à travers différents territoires. 
+
+Tes missions :
+ 
+
+    Piloter les produits Data & IA générative en étroite collaboration avec les équipes techniques
+    Veiller à ce que les produits soient alignés avec les objectifs stratégiques de l'entreprise
+    Identifier et intégrer des solutions basées sur des LLM (ex : Google Gemini, OpenAI GPT, Claude) pour répondre à des problématiques métier
+    Développer et piloter la stratégie globale de plusieurs produits Data & IA
+    Identifier et synthétiser les besoins des différents métiers pour assurer que les produits répondent aux attentes des utilisateurs.
+    Maîtriser la gestion de projets sur tout leur cycle de vie (Discovery, Delivery, Run)
+    Définir et gérer la roadmap produit en intégrant les capacité des modèles d'IA Générative
+    Traduire les besoins métiers en spécifications claires pour les développeurs et assurer la qualité des solutions livrées
+    Organiser la delivery grâce à la méthode agile et garantir la qualité des livraison
+
+Qualifications
+
+Diplômé en informatique, en génie logiciel, en ingénierie des données ou dans un domaine connexe, tu justifies une première expérience significative d'au moins deux ans en tant que Product Owner sur des produits data-driven. 
+
+Tu justifies une expérience significative en IA Générative et LLM : compréhension des concepts et cas d’usage des modèles comme Google Gemini, OpenAI, Claude, Mistral AI.
+
+Tu es familier avec les environnements Cloud et les outils d'infrastructure : connaissance des services AWS, Terraform, et GitLab, avec une capacité à comprendre leurs impact dans des projets Data & IA.
+
+Tu maîtrise des outils Agile : JIRA, Confluence et des méthodes Agile/Scrum.
+Informations complémentaires
+
+Pourquoi choisir NEXTON ? 
+
+Nous te proposons des avantages et des opportunités pour enrichir ton expérience professionnelle et personnelle tout au long de l'année :
+
+▶ Des communautés dynamiques pour t'accompagner dans ton parcours.
+
+▶ Des Meet Up pour développer tes compétences.
+
+▶ Des formations pour te réinventer et progresser.
+
+▶ Des événements sportifs et festifs pour t'épanouir.
+
+▶ Un forfait mobilité durable pour faciliter ton quotidien et encourager la mobilité douce.
+
+▶ Un téléphone de dernière génération pour rester connecté.
+
+Prêt à nous rejoindre ? Rencontrons-nous !
+
+#LI-VC1
+
+https://jobs.smartrecruiters.com/NEXTON/744000093636348-product-owner-data-ia-experimente-h-f?trid=2d92f286-613b-4daf-9dfa-6340ffbecf73

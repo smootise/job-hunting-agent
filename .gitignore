@@ -1,0 +1,18 @@
+# Personal data — never commit
+preferences.yaml
+.env
+profile/*
+!profile/README.md
+
+# Runtime data and outputs
+data/
+output/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.ruff_cache/
+.pytest_cache/

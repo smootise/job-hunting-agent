@@ -1,0 +1,70 @@
+# preferences.example.yaml — schema reference, safe to commit.
+#
+# Copy this to preferences.yaml (gitignored) and fill in your real home
+# location and preferences. See CLAUDE.md's "How to interpret
+# preferences.yaml" section for non-obvious matching rules — several
+# fields here have semantics that are easy to get subtly wrong.
+
+meta:
+  owner_role: "Product Manager (AI specialty)"
+  search_area: "Île-de-France"
+
+home:
+  label: "REPLACE_WITH_YOUR_COMMUTE_ANCHOR" # e.g. a train/metro station name.
+  commute_modes: ["transit", "driving"] # Order = preferred estimation order.
+
+hard_filters: # ONLY certainties — these reject offers outright.
+  remote_policy:
+    accept_onsite: true
+    accept_hybrid: true
+    accept_remote: true
+    min_remote_days_per_week: 0 # No hard remote requirement; remote/hybrid flexibility is scored instead.
+
+  contract_types: ["CDI"] # Reject freelance, CDD, internship, apprenticeship, etc.
+
+  salary_floor_eur: 50000 # Annual gross. For stated ranges, compare against the upper bound, so 45–50k is kept.
+
+  max_commute_minutes: null # null = no hard commute cap; commute is scored instead.
+
+  seniority:
+    include_keywords:
+      - "product manager"
+      - "product owner"
+      - "PM"
+      - "PO"
+    exclude_keywords:
+      - "junior"
+      - "stage"
+      - "stagiaire"
+      - "intern"
+      - "internship"
+      - "alternance"
+      - "apprenticeship"
+      - "graduate program"
+
+  company_blocklist: []
+
+scoring_rubric:
+  ideal_role_description: >
+    Replace with a short natural-language description of your ideal role
+    and company — what you want to bridge (e.g. customer needs, product
+    strategy, technical feasibility), and what company stage/size fits.
+
+  criteria:
+    # Weights are relative, not required to sum to 100 — see CLAUDE.md.
+    - name: weekly_commute_fit
+      weight: 9
+      description: >
+        Describe how commute time should be scored (e.g. total weekly
+        commute = one-way x 2 x onsite days per week, not just one-way).
+
+    - name: role_scope_and_focus
+      weight: 7
+      description: >
+        Describe what makes a role's day-to-day scope attractive vs.
+        unattractive to you.
+
+    - name: compensation_attractiveness
+      weight: 6
+      description: >
+        Describe how stated vs. unstated salary should be scored.
