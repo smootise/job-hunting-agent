@@ -140,6 +140,44 @@ def test_contract_case_insensitive():
     assert filters.check_contract_type(make_record(contract_type="CDI"), ["cdi"]) is None
 
 
+def test_contract_assume_cdi_passes_with_audit_reason():
+    # assume_cdi_when_unstated=True: unstated -> PASS, but keep an audit reason.
+    r = filters.check_contract_type(
+        make_record(contract_type=None), ["CDI"], assume_cdi_when_unstated=True
+    )
+    assert r is not None and r.outcome is Outcome.PASSED
+    assert "assumed CDI" in r.reason
+
+
+def test_contract_assume_cdi_does_not_change_verdict():
+    # A PASSED audit reason must not flip the aggregate away from PASSED.
+    prefs = {"hard_filters": {
+        "contract_types": ["CDI"], "assume_cdi_when_unstated": True,
+        "seniority": {"include_keywords": INCLUDE, "exclude_keywords": EXCLUDE},
+        "remote_policy": ACCEPT_ALL,
+    }}
+    rec = make_record(title="Senior Product Manager", contract_type=None,
+                      location="Full remote")
+    v = filters.apply_hard_filters(rec, prefs)
+    assert v.outcome is Outcome.PASSED
+    # The audit trail is retained even on a pass.
+    assert any(r.filter == "contract_type" and "assumed CDI" in r.reason for r in v.reasons)
+
+
+def test_contract_assume_cdi_only_when_cdi_is_accepted():
+    # If CDI isn't an accepted type, we must NOT assume it — falls back to review.
+    r = filters.check_contract_type(
+        make_record(contract_type=None), ["CDD"], assume_cdi_when_unstated=True
+    )
+    assert r is not None and r.outcome is Outcome.NEEDS_REVIEW
+
+
+def test_contract_assume_cdi_off_by_default():
+    # Default (flag absent/False) keeps the cautious needs_review behavior.
+    r = filters.check_contract_type(make_record(contract_type=None), ["CDI"])
+    assert r is not None and r.outcome is Outcome.NEEDS_REVIEW
+
+
 # --------------------------------------------------------------------------
 # Salary floor (via the filter — parser has its own suite)
 # --------------------------------------------------------------------------
@@ -216,6 +254,59 @@ def test_min_remote_days_positive_is_needs_review():
     policy = {**ACCEPT_ALL, "min_remote_days_per_week": 2}
     r = filters.check_remote_policy(make_record(location="hybride"), policy)
     assert r is not None and r.outcome is Outcome.NEEDS_REVIEW
+
+
+# Remote policy read from DESCRIPTION prose (not just the location field) — the
+# common French case. (title kept neutral; only location/description vary.)
+def _classify(location=None, description=None):
+    return filters.classify_remote_policy(
+        make_record(location=location, description=description)
+    )
+
+
+def test_remote_prose_hybrid_days_per_week():
+    assert _classify(description="Télétravail 2 jours par semaine.") == "hybrid"
+    assert _classify(description="2 à 3 jours de télétravail possible.") == "hybrid"
+    assert _classify(description="Hybrid: 3 days from home per week.") == "hybrid"
+
+
+def test_remote_prose_full_remote():
+    assert _classify(description="Poste en full remote.") == "remote"
+    assert _classify(description="100% télétravail.") == "remote"
+    # 100% is full, not partial — must not be dragged into hybrid by the % rule.
+    assert _classify(description="Télétravail 100% du temps possible.") == "remote"
+
+
+def test_remote_verb_and_separator_forms_are_hybrid():
+    # Real FR phrasings that earlier slipped through to a wrong 'remote' label.
+    assert _classify(description="Possibilité de télétravailler 2 jours par semaine.") == "hybrid"
+    assert _classify(description="Télétravail possible 2 jours par semaine.") == "hybrid"
+    assert _classify(description="Télétravail : jusqu'à 3 jours/semaine.") == "hybrid"
+    assert _classify(description="Deux jours de télétravail par semaine.") == "hybrid"
+    assert _classify(description="Télétravailler jusqu'à 50% du temps.") == "hybrid"
+
+
+def test_onsite_amenity_word_does_not_override_hybrid():
+    # "Sur site, une salle de sport" is an amenity, not a work policy — it must
+    # not override a clear hybrid signal in the same posting.
+    desc = "Télétravail 2 jours par semaine. Sur site, une salle de sport."
+    assert _classify(description=desc) == "hybrid"
+
+
+def test_remote_prose_onsite_negation_wins():
+    # "présentiel"/"aucun télétravail" pins onsite even if 'télétravail' appears.
+    assert _classify(description="Poste 100% présentiel, aucun télétravail.") == "onsite"
+    assert _classify(description="No remote work; office-based role.") == "onsite"
+
+
+def test_remote_hybrid_beats_bare_teletravail_mention():
+    # A qualified "2 jours de télétravail" must classify hybrid, not full-remote.
+    assert _classify(description="Nous offrons 2 jours de télétravail par semaine.") == "hybrid"
+
+
+def test_remote_truly_silent_stays_unknown():
+    # No cue anywhere -> unknown -> needs_review (we do NOT assume onsite).
+    assert _classify(location="Paris", description="Rejoignez une équipe produit dynamique.") == "unknown"
 
 
 # --------------------------------------------------------------------------

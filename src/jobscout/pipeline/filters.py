@@ -91,21 +91,37 @@ class FilterVerdict:
 
 
 def check_contract_type(
-    record: JobRecord, contract_types: list[str] | None
+    record: JobRecord,
+    contract_types: list[str] | None,
+    *,
+    assume_cdi_when_unstated: bool = False,
 ) -> FilterReason | None:
     """Keep only offers whose contract type is in ``contract_types``.
 
     ``record.contract_type`` is already normalized by the adapters (CDI/CDD/…
-    or ``None`` when unstated) — we do NOT re-parse it. The two non-obvious
-    cases, both per CLAUDE.md:
-      * ``None`` (unstated, common in French CDI-implied postings) →
-        ``needs_review``, never a reject.
+    or ``None`` when unstated) — we do NOT re-parse it. The non-obvious cases:
       * an empty/absent allowlist → the filter is disabled (everything passes),
         so a config typo can't nuke the run.
+      * ``None`` (unstated) — behavior depends on ``assume_cdi_when_unstated``
+        (from ``preferences.yaml``):
+          - default (``False``) → ``needs_review``, never a reject.
+          - ``True`` → **pass, assuming CDI**, but keep an audit-trail reason
+            (outcome PASSED, so it doesn't change the verdict) so the digest can
+            show "CDI (assumed)" and the scorer knows it wasn't stated. This
+            trades a rare false-positive (a CDD slips through to human review,
+            where it's caught) for far fewer manual gates — a deliberate owner
+            choice, since ~99% of unstated French postings are CDI.
     """
     if not contract_types:
         return None  # filter disabled
     if record.contract_type is None:
+        allowed_upper = {c.strip().upper() for c in contract_types}
+        if assume_cdi_when_unstated and "CDI" in allowed_upper:
+            return FilterReason(
+                "contract_type",
+                Outcome.PASSED,
+                "contract type not stated; assumed CDI",
+            )
         return FilterReason(
             "contract_type",
             Outcome.NEEDS_REVIEW,
@@ -258,21 +274,67 @@ def check_company_blocklist(
     return None
 
 
-# Remote-policy classification from free text. Deliberately conservative: when
-# the cues are absent or contradictory we return "unknown" (→ needs_review),
-# never a rejection. With the owner's current prefs (accept everything) the only
-# live effect is routing genuinely-unknown offers to review; the flags are
-# still honored generally so flipping one to false actually filters.
+# Remote-policy classification from free text (location + description prose).
+# Deliberately conservative: when the cues are absent or contradictory we return
+# "unknown" (→ needs_review), never a rejection. Coverage is broadened for
+# description prose (not just the short location field), since French postings
+# usually state the policy in the body ("2 jours de télétravail par semaine",
+# "100% présentiel"). Precedence in `classify_remote_policy` — negation, then
+# hybrid, then full-remote — resolves overlaps: a posting that says "télétravail"
+# AND "2 jours" is hybrid, not full remote.
+# An *explicit telework negation* — decisive for onsite even if "télétravail"
+# appears (it appears precisely because it's being denied). Kept narrow on
+# purpose: only phrasings that actually deny remote work, NOT bare "sur site" /
+# "présentiel", which turn up in benefit blurbs ("Sur site, une salle de sport")
+# and must not override a real hybrid signal. Those bare words are handled last,
+# only when no remote signal exists at all (see `_ONSITE_WORD`).
 _REMOTE_ONSITE_NEGATION = re.compile(
-    r"(pas de t[ée]l[ée]travail|no remote|sur site|sur-site|pr[ée]sentiel|on[ -]?site)",
+    r"(pas de t[ée]l[ée]travail|aucun t[ée]l[ée]travail|sans t[ée]l[ée]travail"
+    r"|100\s*%\s*pr[ée]sentiel|t[ée]l[ée]travail\s*:?\s*non"
+    r"|no remote|remote\s*:\s*no|not?\s*remote)",
     re.IGNORECASE,
 )
-_REMOTE_HYBRID = re.compile(
-    r"(hybrid|hybride|t[ée]l[ée]travail partiel|remote partiel|\d\s*j(?:ours?)?\s*(?:de\s*)?t[ée]l[ée]travail)",
+
+# A plain onsite word, used only as a last resort (no remote signal anywhere).
+_ONSITE_WORD = re.compile(
+    r"(pr[ée]sentiel|sur[- ]site|on[- ]?site|office[- ]based)", re.IGNORECASE
+)
+# A remote/telework keyword at all. Presence alone means *some* remote is on
+# offer; whether it's full or partial is decided by the partiality signal below.
+_REMOTE_KEYWORD = re.compile(
+    r"(t[ée]l[ée]travail\w*|remote|distanciel)", re.IGNORECASE
+)
+
+# An explicit "hybrid/partial" word — decisive for hybrid regardless of counts.
+_REMOTE_HYBRID_WORD = re.compile(
+    r"(hybrid|hybride|t[ée]l[ée]travail partiel|remote partiel|partial remote"
+    r"|remote[- ]friendly)",
     re.IGNORECASE,
 )
+
+# A *partiality quantifier*: "N jours", "N à M jours", "deux jours", "N%",
+# "N jours par mois/semaine", "50% du temps", "N days per week". When one of
+# these co-occurs with a remote keyword, the arrangement is hybrid, not full
+# remote — this is what tells "télétravail 2 jours/semaine" apart from
+# "full remote". Kept separate from the keyword so ANY word order / separator
+# ("Télétravail possible 2 jours", "Télétravail : jusqu'à 3 jours") is caught.
+# A *partiality quantifier*: a count of days, or a percentage strictly below
+# 100 (100% is full remote, not partial — excluded via the (?!100) guard, and
+# capped to a 1–99 shape). "deux jours", "2 à 3 jours", "50% du temps",
+# "2 days per week".
+_PARTIAL_QUANTIFIER = re.compile(
+    r"\b("
+    r"(?:un|une|deux|trois|quatre|cinq|\d+)\s*(?:[àa-]\s*\d+\s*)?jours?\b"  # N / deux jours
+    r"|(?!100\b)\d{1,2}\s*%\s*(?:du\s*temps)?"                             # 1–99% (not 100%)
+    r"|\d\s*days?\s*(?:per\s*week|from\s*home|/\s*week)"                    # 2 days per week
+    r")",
+    re.IGNORECASE,
+)
+
+# Full/unqualified remote signals.
 _REMOTE_FULL = re.compile(
-    r"(full remote|100%?\s*remote|t[ée]l[ée]travail (?:complet|total|int[ée]gral)|remote|t[ée]l[ée]travail)",
+    r"(full remote|fully remote|100\s*%?\s*remote|t[ée]l[ée]travail "
+    r"(?:complet|total|int[ée]gral)|t[ée]l[ée]travail 100\s*%)",
     re.IGNORECASE,
 )
 
@@ -280,19 +342,47 @@ _REMOTE_FULL = re.compile(
 def classify_remote_policy(record: JobRecord) -> str:
     """Return 'remote' | 'hybrid' | 'onsite' | 'unknown' from free text.
 
-    Reads ``location`` + ``description``. Precedence matters: an explicit
-    onsite negation ("pas de télétravail", "présentiel") pins onsite even if
-    the word "télétravail" appears in it; then hybrid; then remote; else, if a
-    plain onsite word appears, onsite; otherwise 'unknown'. When in doubt →
-    'unknown', which becomes ``needs_review``, never a reject.
+    Reads ``location`` + ``description``. Precedence (each step is decisive):
+
+      1. **Onsite negation** ("pas de télétravail", "100% présentiel") → onsite,
+         even if the word "télétravail" also appears.
+      2. **Explicit hybrid word** ("hybride", "télétravail partiel") → hybrid.
+      3. **Remote keyword + a partiality quantifier** ("2 jours de télétravail",
+         "télétravailler jusqu'à 3 jours", "50% du temps") → hybrid. Keyword and
+         quantifier are matched independently, so any word order or separator
+         between them still resolves — the fix for real postings that write
+         "Télétravail possible 2 jours" or "Télétravail : jusqu'à 3 jours".
+      4. **Explicit full-remote** ("full remote", "100% remote") → remote.
+      5. **A bare remote keyword** with no partiality and no full marker →
+         remote (an unqualified "télétravail" mention).
+      6. A plain onsite word ("présentiel", "sur site") without any remote →
+         onsite; otherwise **unknown** (→ needs_review, never a reject).
+
+    Precedence 3-before-4/5 is the key correctness point: a *quantified* remote
+    mention is hybrid, so we never mislabel a 2-day-hybrid job as full remote
+    (which would zero out its commute in scoring) — the bug this ordering fixes.
     """
     text = f"{record.location or ''} {record.description or ''}"
+
+    # 1. Explicit telework negation wins outright.
     if _REMOTE_ONSITE_NEGATION.search(text):
         return "onsite"
-    if _REMOTE_HYBRID.search(text):
+
+    has_remote = _REMOTE_KEYWORD.search(text) is not None
+
+    # 2-3. Any hybrid word, or a remote keyword paired with a partiality
+    # quantifier (in any order / with any separator between them).
+    if _REMOTE_HYBRID_WORD.search(text):
         return "hybrid"
-    if _REMOTE_FULL.search(text):
+    if has_remote and _PARTIAL_QUANTIFIER.search(text):
+        return "hybrid"
+    # 4-5. Explicit or bare remote with no partiality → full remote.
+    if _REMOTE_FULL.search(text) or has_remote:
         return "remote"
+    # 6. Only now, with no remote signal at all, does a bare onsite word count —
+    # so "Sur site, une salle de sport" in a telework posting can't force onsite.
+    if _ONSITE_WORD.search(text):
+        return "onsite"
     return "unknown"
 
 
@@ -366,7 +456,11 @@ def apply_hard_filters(record: JobRecord, prefs: dict) -> FilterVerdict:
     seniority = hard.get("seniority", {}) or {}
 
     candidates = [
-        check_contract_type(record, hard.get("contract_types")),
+        check_contract_type(
+            record,
+            hard.get("contract_types"),
+            assume_cdi_when_unstated=bool(hard.get("assume_cdi_when_unstated", False)),
+        ),
         check_salary_floor(record, hard.get("salary_floor_eur")),
         check_seniority(
             record,

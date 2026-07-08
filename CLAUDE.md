@@ -63,7 +63,9 @@ The file is config data. Several fields have **non-obvious semantics** — imple
 
 ### `hard_filters.contract_types`
 - Keep only offers whose contract type is in the list.
-- When contract type is **unstated** (common in French postings, where CDI is often implied), **mark `needs_review` rather than dropping** — rejecting on absence is a false-negative risk, same principle as salary below.
+- When contract type is **unstated** (common in French postings, where CDI is often implied), behavior depends on the sibling flag **`assume_cdi_when_unstated`**:
+  - `false` (the cautious default) → **mark `needs_review` rather than dropping** — rejecting on absence is a false-negative risk, same principle as salary below.
+  - `true` (**currently set**, when `CDI` is in `contract_types`) → **pass, assuming CDI**, but emit a PASSED-outcome audit reason ("contract type not stated; assumed CDI") so the digest can show "CDI (assumed)" and the scorer knows it wasn't stated. The owner accepts a rare false-positive (a CDD reaching human review) to eliminate a manual gate on the ~99% of unstated FR postings that are CDI. Never invent a contract *other* than CDI, and never assume when CDI isn't an accepted type.
 
 ### `hard_filters.salary_floor_eur`
 - **Apply only to offers that STATE a salary.** If no salary is stated, **skip the check** — do not reject. (The scorer handles unpriced offers leniently.)
@@ -71,6 +73,7 @@ The file is config data. Several fields have **non-obvious semantics** — imple
 
 ### `hard_filters.remote_policy`
 - With `accept_onsite/hybrid/remote` all `true` and `min_remote_days_per_week: 0`, this filter currently accepts everything **by design** (flexibility is scored, not filtered). Still implement it generally, so flipping a flag to `false` actually filters.
+- **Classification reads both `location` and the `description` prose** (`classify_remote_policy`), since French postings usually state the policy in the body ("2 jours de télétravail par semaine", "100% présentiel"). Precedence: onsite-negation → hybrid → full-remote → else `unknown`. A genuinely undeterminable policy stays **`unknown` → `needs_review`, never a reject** — we do **not** assume onsite-when-unstated, because that would (a) silently mislabel hybrid/remote jobs, (b) poison the `weekly_commute_fit` score (which multiplies by onsite days), and (c) hard-reject unstated offers the moment `accept_onsite` is set `false`. Reading the prose resolves most cases correctly; the small honest residue is reviewed.
 
 ### `scoring_rubric`
 - **Weights are relative** — normalize before combining (current sum is 73, not 100). Don't assume they total 100.
