@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 
-from jobscout.pipeline import filter_stage, ingest
+from jobscout.pipeline import enrich_linkedin, filter_stage, ingest
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -68,12 +68,43 @@ def main(argv: list[str] | None = None) -> None:
         help="Report counts and log rejections without writing verdicts.",
     )
 
+    enrich_parser = subparsers.add_parser(
+        "enrich-linkedin",
+        help="Backfill LinkedIn offer descriptions from the public guest "
+        "endpoint, then re-filter the enriched rows.",
+    )
+    enrich_parser.add_argument(
+        "--limit",
+        type=int,
+        default=25,
+        help="Max offers to fetch this run (rate-limit cap; default: 25).",
+    )
+    enrich_parser.add_argument(
+        "--min-delay",
+        type=float,
+        default=2.0,
+        help="Minimum seconds between network fetches (default: 2.0).",
+    )
+    enrich_parser.add_argument(
+        "--max-delay",
+        type=float,
+        default=5.0,
+        help="Maximum seconds between network fetches (default: 5.0).",
+    )
+    enrich_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Fetch/parse and report without writing descriptions or verdicts.",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "ingest":
         _run_ingest(args)
     elif args.command == "filter":
         _run_filter(args)
+    elif args.command == "enrich-linkedin":
+        _run_enrich_linkedin(args)
     else:
         parser.print_help()
 
@@ -134,6 +165,31 @@ def _print_filter_summary(summary: filter_stage.FilterSummary) -> None:
     if summary.total == 0 and not summary.refilter:
         print("  (nothing to filter — all stored offers already judged; "
               "use --refilter to re-judge)")
+
+
+def _run_enrich_linkedin(args: argparse.Namespace) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    summary = enrich_linkedin.run_enrich_linkedin(
+        limit=args.limit,
+        min_delay=args.min_delay,
+        max_delay=args.max_delay,
+        dry_run=args.dry_run,
+    )
+    _print_enrich_summary(summary)
+
+
+def _print_enrich_summary(summary: enrich_linkedin.EnrichSummary) -> None:
+    """Render the enrichment tally."""
+    mode = " (dry-run - nothing written)" if summary.dry_run else ""
+    print(f"jobscout enrich-linkedin{mode}")
+    print(f"  considered:  {summary.considered}  (LinkedIn offers missing a description)")
+    print(f"  enriched:    {summary.enriched}  ({summary.from_cache} from cache)")
+    print(f"  failed:      {summary.failed}  (left needs_review, fail-soft)")
+    if summary.refiltered:
+        changes = ", ".join(f"{k}: {v}" for k, v in sorted(summary.refilter_status_changes.items()))
+        print(f"  re-filtered: {summary.refiltered}  -> {changes}")
+    if summary.considered == 0:
+        print("  (nothing to enrich — all LinkedIn offers already have descriptions)")
 
 
 if __name__ == "__main__":

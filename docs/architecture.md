@@ -23,6 +23,7 @@ framework in v1 — the loop is readable on purpose.
 | Ingest (3 sources) | ✅ Phase 1 | `adapters/`, `pipeline/ingest.py` |
 | Normalize / dedupe / idempotent state | ✅ Phase 1 | `normalize.py`, `storage/db.py` |
 | Hard filters | ✅ Phase 2 | `pipeline/filters.py`, `pipeline/salary.py`, `pipeline/filter_stage.py` |
+| Enrich (LinkedIn descriptions) | ✅ Phase 2 | `adapters/linkedin_guest.py`, `pipeline/enrich_linkedin.py` |
 | Enrich (address + commute) | ⏳ Phase 2 | — |
 | LLM scoring | ⏳ Phase 2 | — |
 | Address-research agent | ⏳ Phase 3 | — |
@@ -42,6 +43,9 @@ src/jobscout/
   pipeline/filters.py      pure hard-filter logic + FilterVerdict
   pipeline/salary.py       free-text salary → annual-gross EUR range parser
   pipeline/filter_stage.py filter orchestration (idempotent, --refilter, dry-run)
+  adapters/linkedin_guest.py  pure parser for the public guest job-posting page
+  pipeline/enrich_linkedin.py LinkedIn description backfill (guest endpoint,
+                              cached, rate-limited, fail-soft, auto re-filter)
   cli.py             `jobscout` entry point
   llm/client.py      thin Ollama wrapper with full-interaction logging
 ```

@@ -342,3 +342,58 @@ def record_filter_verdict(
         "WHERE id = ?",
         (filter_status, filter_reasons_json, _utcnow(), job_id),
     )
+
+
+# --------------------------------------------------------------------------
+# LinkedIn description enrichment (guest-endpoint backfill)
+# --------------------------------------------------------------------------
+
+
+def select_jobs_missing_description(
+    conn: sqlite3.Connection,
+    *,
+    source: str = "linkedin_email",
+    limit: int | None = None,
+) -> list[sqlite3.Row]:
+    """Return rows for one source that have no stored description yet.
+
+    The enrichment step's work list. Selecting on ``description IS NULL`` is
+    what makes the fetch cheap and idempotent: an offer we already backfilled is
+    skipped, so a re-run only touches jobs still missing prose. This is the same
+    "novelty lives in the DB" idempotency the ingest and filter stages use, and
+    it doubles as the fetch cache — we never re-hit a job we've enriched. Rows
+    carry every column, so ``JobRecord.from_row`` consumes them directly.
+    """
+    sql = "SELECT * FROM jobs WHERE source = ? AND (description IS NULL OR description = '')"
+    sql += " ORDER BY id"
+    if limit is not None:
+        sql += " LIMIT ?"
+        return conn.execute(sql, (source, limit)).fetchall()
+    return conn.execute(sql, (source,)).fetchall()
+
+
+def backfill_description(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    description: str,
+    contract_type: str | None = None,
+) -> None:
+    """Fill in a fetched ``description`` (and optionally ``contract_type``).
+
+    Only ever *adds* information: writes the description, and updates
+    ``contract_type`` only when a real one was resolved (``None`` leaves the
+    existing value untouched — we never overwrite a stated contract with
+    nothing, nor invent one). Never touches the original source fields beyond
+    these. The caller commits.
+    """
+    if contract_type is not None:
+        conn.execute(
+            "UPDATE jobs SET description = ?, contract_type = ? WHERE id = ?",
+            (description, contract_type, job_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE jobs SET description = ? WHERE id = ?",
+            (description, job_id),
+        )
