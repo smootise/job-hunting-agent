@@ -22,7 +22,7 @@ framework in v1 — the loop is readable on purpose.
 |---|---|---|
 | Ingest (3 sources) | ✅ Phase 1 | `adapters/`, `pipeline/ingest.py` |
 | Normalize / dedupe / idempotent state | ✅ Phase 1 | `normalize.py`, `storage/db.py` |
-| Hard filters | ⏳ Phase 2 | — |
+| Hard filters | ✅ Phase 2 | `pipeline/filters.py`, `pipeline/salary.py`, `pipeline/filter_stage.py` |
 | Enrich (address + commute) | ⏳ Phase 2 | — |
 | LLM scoring | ⏳ Phase 2 | — |
 | Address-research agent | ⏳ Phase 3 | — |
@@ -38,7 +38,10 @@ src/jobscout/
   config.py          preferences.yaml + .env loaders, credential getters
   adapters/          one module per source (wttj, france_travail, linkedin_email)
   storage/db.py      SQLite schema, idempotent upsert, dedupe, run ledger
-  pipeline/ingest.py orchestration (fail-soft per source, dry-run)
+  pipeline/ingest.py       ingest orchestration (fail-soft per source, dry-run)
+  pipeline/filters.py      pure hard-filter logic + FilterVerdict
+  pipeline/salary.py       free-text salary → annual-gross EUR range parser
+  pipeline/filter_stage.py filter orchestration (idempotent, --refilter, dry-run)
   cli.py             `jobscout` entry point
   llm/client.py      thin Ollama wrapper with full-interaction logging
 ```
@@ -47,9 +50,12 @@ src/jobscout/
 
 SQLite at `data/jobs.db` is the single source of truth. The `jobs` table holds
 the record fields plus bookkeeping (`first_seen_at`, `last_seen_at`,
-normalized dedupe keys, `dup_group`, `status`); a `runs` table is the audit
-ledger. Schema is created idempotently on connect. Markdown outputs
-(`output/digests/`, `output/letters/`) arrive in later phases.
+normalized dedupe keys, `dup_group`, `status`) and the Phase 2 hard-filter
+verdict (`filter_status` = passed|needs_review|rejected, `filter_reasons` JSON,
+`filtered_at`); a `runs` table is the audit ledger. Schema is created
+idempotently on connect, and newer columns are backfilled on an existing DB via
+an `ALTER TABLE` guard (`_migrate_add_columns`), so a Phase 1 DB upgrades in
+place. Markdown outputs (`output/digests/`, `output/letters/`) arrive later.
 
 ## Key invariants (enforced in code today)
 

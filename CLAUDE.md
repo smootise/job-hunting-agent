@@ -7,8 +7,9 @@ The full design rationale, phases, and learning goals live in `docs/job-scout-pr
 
 ## Current state
 
-- **Phase 0 (setup) and Phase 1 (ingestion & state) are done.** Phase 2 (hard filters, enrichment, scoring) is next; see the brief for the phase plan.
-- **What runs today:** `jobscout ingest` fetches all three sources (WTTJ, France Travail, LinkedIn alert emails), dedupes, and stores new offers idempotently in `data/jobs.db`. `--dry-run` and `--source` flags exist.
+- **Phase 0, Phase 1, and the hard-filter half of Phase 2 are done.** Still open in Phase 2: address/commute enrichment (owner has an untested IDFM PRIM key) and LLM scoring; see the brief for the phase plan.
+- **What runs today:** `jobscout ingest` fetches all three sources (WTTJ, France Travail, LinkedIn alert emails), dedupes, and stores new offers idempotently in `data/jobs.db`. `jobscout filter` then applies the `preferences.yaml` hard filters to stored offers and records a verdict (`filter_status` passed|needs_review|rejected + `filter_reasons` JSON) on each — idempotent, with `--refilter` and `--dry-run`. Ingest also has `--dry-run`/`--source`.
+- **Before touching the hard filters**, note the preference-interpretation traps below are enforced by tests in `tests/test_filters.py` / `tests/test_salary.py` (whole-token seniority, salary upper-bound + ×12/13/14 annualization, null/0-disables, absence→needs_review). The pure logic is `pipeline/filters.py` + `pipeline/salary.py`; orchestration is `pipeline/filter_stage.py`.
 - **Code map:** `adapters/` (one module per source), `normalize.py` (shared language/dedupe/contract helpers), `storage/db.py` (schema + idempotent upsert), `pipeline/ingest.py` (orchestration), `cli.py`. Tests in `tests/` run offline against fixtures.
 - **Before touching ingestion**, read `docs/ingest.md` — it captures the as-built adapters, the record→DB flow, and hard-won API quirks (WTTJ Referer header, France Travail region/range, contract-`None` rule). Don't re-derive those.
 

@@ -12,8 +12,9 @@ without spawning a process.
 from __future__ import annotations
 
 import argparse
+import logging
 
-from jobscout.pipeline import ingest
+from jobscout.pipeline import filter_stage, ingest
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -45,10 +46,34 @@ def main(argv: list[str] | None = None) -> None:
         help="Fetch and report counts without writing to data/.",
     )
 
+    filter_parser = subparsers.add_parser(
+        "filter",
+        help="Apply the preferences.yaml hard filters to stored offers.",
+    )
+    filter_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Max offers to judge this run (default: all pending).",
+    )
+    filter_parser.add_argument(
+        "--refilter",
+        action="store_true",
+        help="Re-judge every offer, not just un-filtered ones "
+        "(use after editing preferences.yaml).",
+    )
+    filter_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report counts and log rejections without writing verdicts.",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "ingest":
         _run_ingest(args)
+    elif args.command == "filter":
+        _run_filter(args)
     else:
         parser.print_help()
 
@@ -83,6 +108,32 @@ def _print_summary(summary: ingest.IngestSummary) -> None:
         print(f"  total fetched: {summary.total_fetched} (would-be-new not computed in dry-run)")
     else:
         print(f"  total new: {summary.total_new} / fetched: {summary.total_fetched}")
+
+
+def _run_filter(args: argparse.Namespace) -> None:
+    # Surface the per-rejection log lines the stage emits (transparency: a human
+    # should be able to see exactly what got dropped and why).
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    summary = filter_stage.run_filter(
+        limit=args.limit,
+        refilter=args.refilter,
+        dry_run=args.dry_run,
+    )
+    _print_filter_summary(summary)
+
+
+def _print_filter_summary(summary: filter_stage.FilterSummary) -> None:
+    """Render the passed / needs_review / rejected tally."""
+    mode = " (dry-run - nothing written)" if summary.dry_run else ""
+    scope = " [refilter: all offers]" if summary.refilter else ""
+    print(f"jobscout filter{mode}{scope}")
+    print(f"  passed:       {summary.passed}")
+    print(f"  needs_review: {summary.needs_review}")
+    print(f"  rejected:     {summary.rejected}")
+    print(f"  total judged: {summary.total}")
+    if summary.total == 0 and not summary.refilter:
+        print("  (nothing to filter — all stored offers already judged; "
+              "use --refilter to re-judge)")
 
 
 if __name__ == "__main__":
