@@ -4,6 +4,11 @@ preferences.yaml
 profile/*
 !profile/README.md
 
+# Real captured emails contain personal addresses — keep local. Tests run
+# against a scrubbed synthetic .eml that IS committed (see tests/fixtures).
+tests/fixtures/*.eml
+!tests/fixtures/*_synthetic.eml
+
 # Runtime data and outputs
 data/
 output/

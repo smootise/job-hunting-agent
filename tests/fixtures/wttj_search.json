@@ -1,0 +1,901 @@
+{
+  "results": [
+    {
+      "hits": [
+        {
+          "slug": "product-marketing-manager_paris_THIGA_54V0Wr",
+          "name": "Consultant Product Marketing Manager (PMM) - Produit digital",
+          "promoted": false,
+          "profile": null,
+          "language": "fr",
+          "published_at": "2026-07-08T10:00:00.000+02:00",
+          "website": {
+            "reference": "thiga"
+          },
+          "reference": "THIGA_54V0Wr",
+          "organization": {
+            "name": "Thiga",
+            "slug": "thiga",
+            "descriptions": {},
+            "reference": "5NbMx62",
+            "size": {
+              "fr": "Entre 50 et 250 salariés",
+              "en": "Between 50 and 250 employees",
+              "es": "Entre 50 y 250 empleados",
+              "cs": "Od 50 do 250 zaměstnanců",
+              "sk": "Od 50 do 250 zamestnancov"
+            },
+            "nb_employees": 196,
+            "logo": {
+              "url": "https://cdn-images.welcometothejungle.com/-PFCz32keLmtLiVKiOg71GB6Gokf9gYFVyehI_yJ8CU/w:200/q:85/czM6Ly93dHRqLXBy/b2R1Y3Rpb24vdXBs/b2Fkcy9vcmdhbml6/YXRpb24vbG9nby80/OTM5LzE0NjQ3OS9i/Y2RhNWJmYi1lYjcz/LTRiMjItOWYxNi03/MjdjNWZkODIwYmQu/cG5n",
+              "thumb": {
+                "url": "https://cdn-images.welcometothejungle.com/bJcLn9OWlMiJ6xLvYa5N6vk1mXrD3yFBufU55Mt9kRQ/w:70/q:85/czM6Ly93dHRqLXBy/b2R1Y3Rpb24vdXBs/b2Fkcy9vcmdhbml6/YXRpb24vbG9nby80/OTM5LzE0NjQ3OS9i/Y2RhNWJmYi1lYjcz/LTRiMjItOWYxNi03/MjdjNWZkODIwYmQu/cG5n"
+              }
+            },
+            "labels": [],
+            "cover_image": {
+              "fr": null,
+              "en": null,
+              "es": null,
+              "cs": null,
+              "sk": null
+            },
+            "has_default_job": false,
+            "website_organization": {
+              "slug": "thiga"
+            }
+          },
+          "sectors": [
+            {
+              "name": {
+                "fr": "Design",
+                "en": "Design",
+                "es": "Diseño",
+                "cs": "Design",
+                "sk": "Dizajn"
+              },
+              "parent": {
+                "fr": "Publicité / Marketing / Agence",
+                "en": "Advertising / Marketing / Agency",
+                "es": "Publicidad/Marketing/Agencia",
+                "cs": "Advertising / Marketing / Agentury",
+                "sk": "Reklama / Marketing / Agentúry"
+              },
+              "id": 165
+            },
+            {
+              "name": {
+                "fr": "IT / Digital",
+                "en": "IT / Digital",
+                "es": "TI/Digital",
+                "cs": "IT / Digital",
+                "sk": "IT / Digitálne technológie"
+              },
+              "parent": {
+                "fr": "Conseil / Audit",
+                "en": "Consulting / Audit",
+                "es": "Asesoría/Auditoría",
+                "cs": "Poradenství a audit",
+                "sk": "Poradenstvo a audit"
+              },
+              "id": 86
+            },
+            {
+              "name": {
+                "fr": "Organisation / Management",
+                "en": "Organization / Management",
+                "es": "Organización/Gestión",
+                "cs": "Organizace / Management",
+                "sk": "Organizácia / Manažment"
+              },
+              "parent": {
+                "fr": "Conseil / Audit",
+                "en": "Consulting / Audit",
+                "es": "Asesoría/Auditoría",
+                "cs": "Poradenství a audit",
+                "sk": "Poradenstvo a audit"
+              },
+              "id": 87
+            },
+            {
+              "name": {
+                "fr": "Digital",
+                "en": "Digital",
+                "es": "Digital",
+                "cs": "Digital",
+                "sk": "Digitálne technológie"
+              },
+              "parent": {
+                "fr": "Publicité / Marketing / Agence",
+                "en": "Advertising / Marketing / Agency",
+                "es": "Publicidad/Marketing/Agencia",
+                "cs": "Advertising / Marketing / Agentury",
+                "sk": "Reklama / Marketing / Agentúry"
+              },
+              "id": 160
+            }
+          ],
+          "sectors_name": {
+            "fr": [
+              {
+                "Publicité / Marketing / Agence": "Design"
+              },
+              {
+                "Conseil / Audit": "IT / Digital"
+              },
+              {
+                "Conseil / Audit": "Organisation / Management"
+              },
+              {
+                "Publicité / Marketing / Agence": "Digital"
+              }
+            ],
+            "en": [
+              {
+                "Advertising / Marketing / Agency": "Design"
+              },
+              {
+                "Consulting / Audit": "IT / Digital"
+              },
+              {
+                "Consulting / Audit": "Organization / Management"
+              },
+              {
+                "Advertising / Marketing / Agency": "Digital"
+              }
+            ],
+            "es": [
+              {
+                "Publicidad/Marketing/Agencia": "Diseño"
+              },
+              {
+                "Asesoría/Auditoría": "TI/Digital"
+              },
+              {
+                "Asesoría/Auditoría": "Organización/Gestión"
+              },
+              {
+                "Publicidad/Marketing/Agencia": "Digital"
+              }
+            ],
+            "cs": [
+              {
+                "Advertising / Marketing / Agentury": "Design"
+              },
+              {
+                "Poradenství a audit": "IT / Digital"
+              },
+              {
+                "Poradenství a audit": "Organizace / Management"
+              },
+              {
+                "Advertising / Marketing / Agentury": "Digital"
+              }
+            ],
+            "sk": [
+              {
+                "Reklama / Marketing / Agentúry": "Dizajn"
+              },
+              {
+                "Poradenstvo a audit": "IT / Digitálne technológie"
+              },
+              {
+                "Poradenstvo a audit": "Organizácia / Manažment"
+              },
+              {
+                "Reklama / Marketing / Agentúry": "Digitálne technológie"
+              }
+            ]
+          },
+          "contract_type": "FULL_TIME",
+          "contract_type_names": {
+            "fr": "CDI",
+            "en": "Full-Time",
+            "es": "Contrato indefinido",
+            "cs": "Plný úvazek",
+            "sk": "Zmluva na dobu neurčitú"
+          },
+          "contract_duration_minimum": null,
+          "contract_duration_maximum": null,
+          "has_contract_duration": false,
+          "experience_level_minimum": 3,
+          "has_experience_level_minimum": true,
+          "education_level": "",
+          "has_education_level": true,
+          "salary_currency": null,
+          "salary_minimum": null,
+          "salary_maximum": null,
+          "salary_period": "none",
+          "salary_yearly_minimum": null,
+          "has_salary_yearly_minimum": false,
+          "office": {
+            "city": "Paris",
+            "district": "Paris",
+            "state": "Ile-de-France",
+            "country": "France",
+            "country_code": "FR"
+          },
+          "offices": [
+            {
+              "city": "Paris",
+              "district": "Paris",
+              "state": "Ile-de-France",
+              "country": "France",
+              "country_code": "FR"
+            }
+          ],
+          "department": null,
+          "profession": {
+            "name": {
+              "fr": "Digital",
+              "en": "Digital",
+              "es": "Digital",
+              "cs": "Digital",
+              "sk": "Digitálne technológie"
+            },
+            "category": {
+              "fr": "Conseil",
+              "en": "Consulting",
+              "es": "Asesoría",
+              "cs": "Consulting",
+              "sk": "Poradenstvo"
+            },
+            "id": 40
+          },
+          "profession_name": {
+            "fr": {
+              "Conseil": "Digital"
+            },
+            "en": {
+              "Consulting": "Digital"
+            },
+            "es": {
+              "Asesoría": "Digital"
+            },
+            "cs": {
+              "Consulting": "Digital"
+            },
+            "sk": {
+              "Poradenstvo": "Digitálne technológie"
+            }
+          },
+          "remote": "partial",
+          "_geoloc": [
+            {
+              "lat": 48.8730651,
+              "lng": 2.3352733
+            }
+          ],
+          "objectID": "554228",
+          "_highlightResult": {
+            "name": {
+              "value": "Consultant <em>Product</em> Marketing <em>Manager</em> (PMM) - Produit digital",
+              "matchLevel": "full",
+              "fullyHighlighted": false,
+              "matchedWords": [
+                "product",
+                "manager"
+              ]
+            },
+            "organization": {
+              "name": {
+                "value": "Thiga",
+                "matchLevel": "none",
+                "matchedWords": []
+              }
+            },
+            "contract_type_names": {
+              "fr": {
+                "value": "CDI",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "en": {
+                "value": "Full-Time",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "es": {
+                "value": "Contrato indefinido",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "cs": {
+                "value": "Plný úvazek",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "sk": {
+                "value": "Zmluva na dobu neurčitú",
+                "matchLevel": "none",
+                "matchedWords": []
+              }
+            },
+            "office": {
+              "city": {
+                "value": "Paris",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "district": {
+                "value": "Paris",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "state": {
+                "value": "Ile-de-France",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "country": {
+                "value": "France",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "country_code": {
+                "value": "FR",
+                "matchLevel": "none",
+                "matchedWords": []
+              }
+            },
+            "offices": [
+              {
+                "city": {
+                  "value": "Paris",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "district": {
+                  "value": "Paris",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "state": {
+                  "value": "Ile-de-France",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "country": {
+                  "value": "France",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "country_code": {
+                  "value": "FR",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                }
+              }
+            ],
+            "profession": {
+              "name": {
+                "fr": {
+                  "value": "Digital",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "en": {
+                  "value": "Digital",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "es": {
+                  "value": "Digital",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "cs": {
+                  "value": "Digital",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "sk": {
+                  "value": "Digitálne technológie",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                }
+              }
+            }
+          }
+        },
+        {
+          "slug": "cdi-business-developer-chef-fe-de-projet-digital_paris",
+          "name": "Sales Executive & Product Manager",
+          "promoted": false,
+          "profile": "* Tu es diplômé(e) d’une grande école de commerce ou d'ingénieur\n    \n* Tu es passionné(e) par le monde de la tech\n    \n* Tu es proactif(ve) et tu aimes le challenge\n    \n* Tu as envie de progresser dans un environnement stimulant et une ambiance chaleureuse\n    \n* Tu es capable de coordonner plusieurs équipes en parallèle\n    \n* Une parfaite connaissance de la langue française à l'écrit comme à l'oral est demandée\n    \n\nAfin de t’aider dans ta mission, tu recevras une formation complète sur le développement applicatif en méthode agile, qui te permettra de répondre à la plupart des interrogations des clients.\n\nSi tu as suivi une formation en code ou que tu as des connaissances en code, c'est un plus !",
+          "language": "fr",
+          "published_at": "2026-07-08T10:00:00.000+02:00",
+          "website": {
+            "reference": "galadrim"
+          },
+          "reference": "GALAD_wqo6r6R",
+          "organization": {
+            "name": "Galadrim",
+            "slug": "galadrim",
+            "descriptions": {},
+            "reference": "4JgaPa8",
+            "size": {
+              "fr": "Entre 50 et 250 salariés",
+              "en": "Between 50 and 250 employees",
+              "es": "Entre 50 y 250 empleados",
+              "cs": "Od 50 do 250 zaměstnanců",
+              "sk": "Od 50 do 250 zamestnancov"
+            },
+            "nb_employees": 170,
+            "logo": {
+              "url": "https://cdn-images.welcometothejungle.com/Mdi4Ae6f9ckLnn-F0U18ZKLacBY3z2dkRfjD7EQp5xo/w:200/q:85/czM6Ly93dHRqLXBy/b2R1Y3Rpb24vdXBs/b2Fkcy9vcmdhbml6/YXRpb24vbG9nby82/NDUwLzE1MTk2My83/NzVjZThkZS05MDgz/LTRhNjgtYjkyYS01/ZjcxZTEwYWQ2NDIu/cG5n",
+              "thumb": {
+                "url": "https://cdn-images.welcometothejungle.com/o3UTeF-6yjOguED1MTx7yGdYdTIXJkW5Bcr34sDAR-s/w:70/q:85/czM6Ly93dHRqLXBy/b2R1Y3Rpb24vdXBs/b2Fkcy9vcmdhbml6/YXRpb24vbG9nby82/NDUwLzE1MTk2My83/NzVjZThkZS05MDgz/LTRhNjgtYjkyYS01/ZjcxZTEwYWQ2NDIu/cG5n"
+              }
+            },
+            "labels": [],
+            "cover_image": {
+              "fr": null,
+              "en": null,
+              "es": null,
+              "cs": null,
+              "sk": null
+            },
+            "has_default_job": false,
+            "website_organization": {
+              "slug": "galadrim"
+            }
+          },
+          "sectors": [
+            {
+              "name": {
+                "fr": "Application mobile",
+                "en": "Mobile Apps",
+                "es": "Aplicaciones móviles",
+                "cs": "Mobile Apps",
+                "sk": "Mobilné aplikácie"
+              },
+              "parent": {
+                "fr": "Tech",
+                "en": "Tech",
+                "es": "Tecnología",
+                "cs": "Tech",
+                "sk": "Technológie"
+              },
+              "id": 96
+            },
+            {
+              "name": {
+                "fr": "IT / Digital",
+                "en": "IT / Digital",
+                "es": "TI/Digital",
+                "cs": "IT / Digital",
+                "sk": "IT / Digitálne technológie"
+              },
+              "parent": {
+                "fr": "Conseil / Audit",
+                "en": "Consulting / Audit",
+                "es": "Asesoría/Auditoría",
+                "cs": "Poradenství a audit",
+                "sk": "Poradenstvo a audit"
+              },
+              "id": 86
+            },
+            {
+              "name": {
+                "fr": "Digital",
+                "en": "Digital",
+                "es": "Digital",
+                "cs": "Digital",
+                "sk": "Digitálne technológie"
+              },
+              "parent": {
+                "fr": "Publicité / Marketing / Agence",
+                "en": "Advertising / Marketing / Agency",
+                "es": "Publicidad/Marketing/Agencia",
+                "cs": "Advertising / Marketing / Agentury",
+                "sk": "Reklama / Marketing / Agentúry"
+              },
+              "id": 160
+            }
+          ],
+          "sectors_name": {
+            "fr": [
+              {
+                "Tech": "Application mobile"
+              },
+              {
+                "Conseil / Audit": "IT / Digital"
+              },
+              {
+                "Publicité / Marketing / Agence": "Digital"
+              }
+            ],
+            "en": [
+              {
+                "Tech": "Mobile Apps"
+              },
+              {
+                "Consulting / Audit": "IT / Digital"
+              },
+              {
+                "Advertising / Marketing / Agency": "Digital"
+              }
+            ],
+            "es": [
+              {
+                "Tecnología": "Aplicaciones móviles"
+              },
+              {
+                "Asesoría/Auditoría": "TI/Digital"
+              },
+              {
+                "Publicidad/Marketing/Agencia": "Digital"
+              }
+            ],
+            "cs": [
+              {
+                "Tech": "Mobile Apps"
+              },
+              {
+                "Poradenství a audit": "IT / Digital"
+              },
+              {
+                "Advertising / Marketing / Agentury": "Digital"
+              }
+            ],
+            "sk": [
+              {
+                "Technológie": "Mobilné aplikácie"
+              },
+              {
+                "Poradenstvo a audit": "IT / Digitálne technológie"
+              },
+              {
+                "Reklama / Marketing / Agentúry": "Digitálne technológie"
+              }
+            ]
+          },
+          "contract_type": "FULL_TIME",
+          "contract_type_names": {
+            "fr": "CDI",
+            "en": "Full-Time",
+            "es": "Contrato indefinido",
+            "cs": "Plný úvazek",
+            "sk": "Zmluva na dobu neurčitú"
+          },
+          "contract_duration_minimum": null,
+          "contract_duration_maximum": null,
+          "has_contract_duration": false,
+          "experience_level_minimum": null,
+          "has_experience_level_minimum": false,
+          "education_level": "BAC_5",
+          "has_education_level": true,
+          "salary_currency": "EUR",
+          "salary_minimum": null,
+          "salary_maximum": null,
+          "salary_period": "yearly",
+          "salary_yearly_minimum": null,
+          "has_salary_yearly_minimum": false,
+          "office": {
+            "city": "Paris",
+            "district": "Paris",
+            "state": "Ile-de-France",
+            "country": "France",
+            "country_code": "FR"
+          },
+          "offices": [
+            {
+              "city": "Lyon",
+              "district": "Rhône",
+              "state": "Auvergne-Rhone-Alpes",
+              "country": "France",
+              "country_code": "FR"
+            },
+            {
+              "city": "Nantes",
+              "district": "Loire-Atlantique",
+              "state": "Loire Region",
+              "country": "France",
+              "country_code": "FR"
+            },
+            {
+              "city": "Paris",
+              "district": "Paris",
+              "state": "Ile-de-France",
+              "country": "France",
+              "country_code": "FR"
+            }
+          ],
+          "department": "Sales",
+          "profession": {
+            "name": {
+              "fr": "Project / Product Management",
+              "en": "Project / Product Management",
+              "es": "Gestión de proyectos/Gestión de producto",
+              "cs": "Project / Product Management",
+              "sk": "Projektový / Produktový manažment"
+            },
+            "category": {
+              "fr": "Tech",
+              "en": "Tech",
+              "es": "Tecnología",
+              "cs": "Tech",
+              "sk": "Technológie"
+            },
+            "id": 12
+          },
+          "profession_name": {
+            "fr": {
+              "Tech": "Project / Product Management"
+            },
+            "en": {
+              "Tech": "Project / Product Management"
+            },
+            "es": {
+              "Tecnología": "Gestión de proyectos/Gestión de producto"
+            },
+            "cs": {
+              "Tech": "Project / Product Management"
+            },
+            "sk": {
+              "Technológie": "Projektový / Produktový manažment"
+            }
+          },
+          "remote": "punctual",
+          "_geoloc": [
+            {
+              "lat": 45.75074,
+              "lng": 4.83968
+            },
+            {
+              "lat": 47.21255,
+              "lng": -1.56413
+            },
+            {
+              "lat": 48.85358,
+              "lng": 2.36424
+            }
+          ],
+          "objectID": "448256",
+          "_snippetResult": {
+            "profile": {
+              "value": "* Tu es diplômé(e) d’une grande école de",
+              "matchLevel": "none"
+            }
+          },
+          "_highlightResult": {
+            "name": {
+              "value": "Sales Executive & <em>Product</em> <em>Manager</em>",
+              "matchLevel": "full",
+              "fullyHighlighted": false,
+              "matchedWords": [
+                "product",
+                "manager"
+              ]
+            },
+            "profile": {
+              "value": "* Tu es diplômé(e) d’une grande école de commerce ou d'ingénieur\n    \n* Tu es passionné(e) par le monde de la tech\n    \n* Tu es proactif(ve) et tu aimes le challenge\n    \n* Tu as envie de progresser dans un environnement stimulant et une ambiance chaleureuse\n    \n* Tu es capable de coordonner plusieurs équipes en parallèle\n    \n* Une parfaite connaissance de la langue française à l'écrit comme à l'oral est demandée\n    \n\nAfin de t’aider dans ta mission, tu recevras une formation complète sur le développement applicatif en méthode agile, qui te permettra de répondre à la plupart des interrogations des clients.\n\nSi tu as suivi une formation en code ou que tu as des connaissances en code, c'est un plus !",
+              "matchLevel": "none",
+              "matchedWords": []
+            },
+            "organization": {
+              "name": {
+                "value": "Galadrim",
+                "matchLevel": "none",
+                "matchedWords": []
+              }
+            },
+            "contract_type_names": {
+              "fr": {
+                "value": "CDI",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "en": {
+                "value": "Full-Time",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "es": {
+                "value": "Contrato indefinido",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "cs": {
+                "value": "Plný úvazek",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "sk": {
+                "value": "Zmluva na dobu neurčitú",
+                "matchLevel": "none",
+                "matchedWords": []
+              }
+            },
+            "office": {
+              "city": {
+                "value": "Paris",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "district": {
+                "value": "Paris",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "state": {
+                "value": "Ile-de-France",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "country": {
+                "value": "France",
+                "matchLevel": "none",
+                "matchedWords": []
+              },
+              "country_code": {
+                "value": "FR",
+                "matchLevel": "none",
+                "matchedWords": []
+              }
+            },
+            "offices": [
+              {
+                "city": {
+                  "value": "Lyon",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "district": {
+                  "value": "Rhône",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "state": {
+                  "value": "Auvergne-Rhone-Alpes",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "country": {
+                  "value": "France",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "country_code": {
+                  "value": "FR",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                }
+              },
+              {
+                "city": {
+                  "value": "Nantes",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "district": {
+                  "value": "Loire-Atlantique",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "state": {
+                  "value": "Loire Region",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "country": {
+                  "value": "France",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "country_code": {
+                  "value": "FR",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                }
+              },
+              {
+                "city": {
+                  "value": "Paris",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "district": {
+                  "value": "Paris",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "state": {
+                  "value": "Ile-de-France",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "country": {
+                  "value": "France",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "country_code": {
+                  "value": "FR",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                }
+              }
+            ],
+            "profession": {
+              "name": {
+                "fr": {
+                  "value": "Project / <em>Product</em> Management",
+                  "matchLevel": "partial",
+                  "fullyHighlighted": false,
+                  "matchedWords": [
+                    "product"
+                  ]
+                },
+                "en": {
+                  "value": "Project / <em>Product</em> Management",
+                  "matchLevel": "partial",
+                  "fullyHighlighted": false,
+                  "matchedWords": [
+                    "product"
+                  ]
+                },
+                "es": {
+                  "value": "Gestión de proyectos/Gestión de producto",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                },
+                "cs": {
+                  "value": "Project / <em>Product</em> Management",
+                  "matchLevel": "partial",
+                  "fullyHighlighted": false,
+                  "matchedWords": [
+                    "product"
+                  ]
+                },
+                "sk": {
+                  "value": "Projektový / Produktový manažment",
+                  "matchLevel": "none",
+                  "matchedWords": []
+                }
+              }
+            }
+          }
+        }
+      ],
+      "nbHits": 938,
+      "page": 0,
+      "nbPages": 313,
+      "hitsPerPage": 3,
+      "exhaustiveNbHits": true,
+      "exhaustiveTypo": true,
+      "exhaustive": {
+        "nbHits": true,
+        "typo": true
+      },
+      "query": "product manager",
+      "index": "wk_cms_jobs_production",
+      "renderingContent": {},
+      "extensions": {
+        "queryCategorization": {}
+      },
+      "processingTimeMS": 10,
+      "processingTimingsMS": {
+        "_request": {
+          "roundTrip": 9
+        },
+        "extensions": 1,
+        "fetch": {
+          "query": 3,
+          "scanning": 2,
+          "total": 6
+        },
+        "getIdx": {
+          "load": {
+            "gens": 1,
+            "total": 1
+          },
+          "total": 1
+        },
+        "total": 10
+      },
+      "serverTimeMS": 11
+    }
+  ]
+}
