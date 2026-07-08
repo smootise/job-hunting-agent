@@ -47,18 +47,19 @@ writes `output/bakeoff/<model>_<company>_<lang>.md`, alongside
 sent). Read them side by side and judge personally — no automated judge
 is used here on purpose.
 
-## Your verdict
-
-Fill in after reading the outputs:
+## Verdict (2026-07-08, run against the NEXTON/FR and Dataiku/EN samples)
 
 | Model | JSON reliability | FR prose vs. reference | EN prose vs. reference | Notes |
 |---|---|---|---|---|
-| qwen3.6:35b-a3b | | | | |
-| gemma4:31b | | | | |
-| mistral-small3.2:latest | | | | |
+| qwen3.6:35b-a3b | 100% valid, 1st try, both postings | Best — idiomatic, integrates posting-specific vocabulary (Discovery/Delivery/Run, "grands comptes") into existing sentences | Best — mirrors the posting's own framing (e.g. "not diving into production code") without inventing facts | Richest, most posting-grounded reasoning on scoring too (e.g. caught an ARR/incentive tension in the Dataiku posting that the others missed) |
+| gemma4:31b | 100% valid, 1st try, both postings | Good but thinner — fluent, correctly tailored, lost some of the reference's specificity | Good but more generic/paraphrased than qwen | Solid, safe, but consistently less tailored than qwen on both letters |
+| mistral-small3.2:latest | Failed both — wrapped JSON in markdown fences despite instructions, invalid even after 1 retry | Weakest — padded to 5 paragraphs with redundant content not in the master | Weakest — kept the original 3 paragraphs near-verbatim then bolted on 3 generic ones (7 total vs. 4) | Ruled out for both roles |
 
-**Chosen pipeline model:** _______
-**Chosen letter model:** _______
+**Chosen pipeline model:** `qwen3.6:35b-a3b`
+**Chosen letter model:** `qwen3.6:35b-a3b`
 
-If either differs from CLAUDE.md's current defaults (`qwen3.6:35b-a3b`
-pipeline / `gemma4:31b` letters), update that file's Models section.
+This overturns the brief's original expectation that Gemma 4 would win on
+letter prose — on this data qwen won both roles outright. `gemma4:31b`
+and `mistral-small3.2:latest` are dropped; CLAUDE.md's Models section has
+been updated to a single-model setup. If future postings surface cases
+where qwen underperforms, re-run this bake-off before switching back.

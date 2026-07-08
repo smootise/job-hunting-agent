@@ -90,9 +90,9 @@ Restate these to yourself before implementing any LLM-touching code.
 ## Models (Ollama)
 
 - **Only one model resides in VRAM at a time** (32 GB card). Ollama swaps between pipeline stages automatically; a few seconds of load time per swap is fine for a batch job.
-- **Pipeline + agent loops** (scoring, tool calling, structured JSON): `qwen3.6:35b-a3b`.
-- **Cover-letter drafting:** `gemma4:31b` (bake-off against Mistral Small 4 in Phase 0; the owner judges FR + EN prose personally — benchmarks vote, the owner decides).
-- **Re-verify the current best models at setup** — this space moves monthly. Treat the names above as the starting default, not gospel.
+- **Single-model setup: `qwen3.6:35b-a3b` for everything** — both pipeline/agent loops (scoring, tool calling, structured JSON) and cover-letter drafting.
+- **Phase 0 bake-off result (`scripts/bakeoff/`, judged by the owner on the NEXTON/FR and Dataiku/EN samples):** qwen3.6:35b-a3b beat gemma4:31b and mistral-small3.2 on *both* axes — 100% valid/schema-conformant JSON with the richer, more posting-specific reasoning of the three on scoring, and the most substantively tailored letters in both languages (it wove in posting-specific phrasing without inventing facts, where gemma4 was safer/more generic and mistral-small3.2 padded the letter with redundant paragraphs). This overturns the brief's original expectation that Gemma 4 would win on prose — see `scripts/bakeoff/README.md` for the full comparison. gemma4:31b and mistral-small3.2 are dropped from the pipeline; no need to keep them pulled for this project.
+- **Re-verify at any future setup** if the model landscape shifts — this space moves monthly. Treat qwen3.6:35b-a3b as the current, evidence-based default, not permanent gospel.
 
 ---
 
