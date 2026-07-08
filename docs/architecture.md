@@ -71,6 +71,44 @@ place. Markdown outputs (`output/digests/`, `output/letters/`) arrive later.
 - **Read-only IMAP** for LinkedIn; **home address never in prompts/logs**
   (Phase 2 concern, but the rule is in force).
 
+## Current state & next: LLM scoring
+
+Done in Phase 2 so far: **hard filters** (`pipeline/filters.py` + `salary.py` +
+`filter_stage.py`, CLI `jobscout filter`) and **LinkedIn description enrichment**
+(`adapters/linkedin_guest.py` + `pipeline/enrich_linkedin.py`, CLI
+`jobscout enrich-linkedin`). On the real 144-offer DB the pipeline currently
+yields ~72 passed / ~33 needs_review / ~39 rejected.
+
+**Next stage is LLM scoring** — for `filter_status='passed'` (and arguably
+`needs_review`) offers, call `qwen3.6:35b-a3b` (zero tools) with the
+`preferences.yaml` rubric + the offer, and store schema-validated JSON: per-
+criterion scores, weighted total 0–100, one-paragraph reasoning, `red_flags[]`.
+See CLAUDE.md's "scoring_rubric" for the exact semantics (normalize weights —
+they sum to 73 not 100; retry once on invalid JSON then mark needs_review; wrap
+the untrusted posting in delimiters; log every call in full via `llm/client.py`).
+
+Two decisions from the filter/enrichment work that the scorer must honor:
+
+1. **The scorer owns remote-policy inference for the silent tail.** The
+   deterministic `classify_remote_policy` reads location + description prose and
+   resolves most offers, but ~33 France Travail postings state no remote policy
+   *anywhere* — confirmed real data absence (the FT API exposes **no** structured
+   remote field; `contexteTravail` carries only work-hours). Those sit at
+   `needs_review`. The scorer reads the full description and must infer likely
+   onsite-days for `weekly_commute_fit` anyway, so it is the right place to
+   judge the remote policy of these silent offers — not more regex.
+
+2. **`weekly_commute_fit` needs `commute_minutes`, which doesn't exist yet.**
+   Address/commute enrichment (the other unbuilt Phase 2 stage) writes one-way
+   `commute_minutes` to the job record. Until it lands, the scorer has no
+   commute number. Options for the scoring stage: score the other criteria and
+   have the scorer note the commute assumption, treat fully-remote as commute 0,
+   or sequence commute-enrichment first. Decide this at the start of scoring.
+
+Contract note for the scorer's inputs: an offer may carry a `filter_reasons`
+entry "contract type not stated; assumed CDI" (from `assume_cdi_when_unstated`).
+That's an *assumption*, not a stated fact — surface it, don't treat as certain.
+
 ## Deeper references
 
 - **Ingestion detail + API quirks:** `docs/ingest.md`
