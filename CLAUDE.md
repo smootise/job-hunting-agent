@@ -1,9 +1,16 @@
 # CLAUDE.md — Job Scout
 
 Operating instructions for Claude Code. Read this at the start of every session.
-The full design rationale, phases, and learning goals live in `job-scout-project-brief.md`; this file is the rules of engagement while writing code.
+The full design rationale, phases, and learning goals live in `docs/job-scout-project-brief.md`; this file is the rules of engagement while writing code.
 
 **Project in one line:** a fully local AI agent pipeline that collects new Product Manager / Product Owner offers in the Île-de-France area, enriches them with address + commute data, scores them against `preferences.yaml`, and drafts tailored cover letters for the best ones. Two equal goals: **learning how agents work** (favor transparency over magic) and **utility** (automate a real job hunt).
+
+## Current state
+
+- **Phase 0 (setup) and Phase 1 (ingestion & state) are done.** Phase 2 (hard filters, enrichment, scoring) is next; see the brief for the phase plan.
+- **What runs today:** `jobscout ingest` fetches all three sources (WTTJ, France Travail, LinkedIn alert emails), dedupes, and stores new offers idempotently in `data/jobs.db`. `--dry-run` and `--source` flags exist.
+- **Code map:** `adapters/` (one module per source), `normalize.py` (shared language/dedupe/contract helpers), `storage/db.py` (schema + idempotent upsert), `pipeline/ingest.py` (orchestration), `cli.py`. Tests in `tests/` run offline against fixtures.
+- **Before touching ingestion**, read `docs/ingest.md` — it captures the as-built adapters, the record→DB flow, and hard-won API quirks (WTTJ Referer header, France Travail region/range, contract-`None` rule). Don't re-derive those.
 
 ---
 
