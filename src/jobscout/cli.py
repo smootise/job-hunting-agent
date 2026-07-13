@@ -235,6 +235,8 @@ def _print_enrich_commute_summary(summary: enrich_commute.EnrichCommuteSummary) 
     print(f"  considered:     {summary.considered}  (passed/needs_review, not yet enriched)")
     print(f"  enriched:       {summary.enriched}  ({summary.remote_skipped} remote → commute 0, "
           f"{summary.approximate} on approximate address)")
+    print(f"  needs address:  {summary.needs_address}  (too vague to route, e.g. bare "
+          f"'Paris'; flagged for the address agent)")
     print(f"  failed:         {summary.failed}  (unresolved address or routing failure; "
           f"left for a later run)")
     if summary.considered == 0 and not summary.re_enrich:

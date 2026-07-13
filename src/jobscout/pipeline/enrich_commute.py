@@ -53,6 +53,7 @@ class EnrichCommuteSummary:
     enriched: int = 0        # rows we routed and wrote a commute for
     remote_skipped: int = 0  # fully-remote → commute 0, no routing
     approximate: int = 0     # of enriched, those on an approximate/low address
+    needs_address: int = 0   # location too vague to route (bare "Paris") → Phase 3 worklist
     failed: int = 0          # unresolved address or routing failure (fail-soft)
 
 
@@ -161,6 +162,21 @@ def _enrich_row(
                     conn, row["id"], address=None, lat=None, lon=None,
                     address_source="remote", address_confidence=None,
                     commute_minutes=0.0, commute_mode="remote",
+                    commute_strategies_json=None,
+                )
+            return
+
+        # Too vague to route (bare "Paris") → mark for the Phase 3 address agent.
+        # Stamp enriched_at so it's a STABLE worklist (not re-tried every run) but
+        # carries no misleading centroid commute. --re-enrich re-evaluates it.
+        if resolved.needs_address:
+            summary.needs_address += 1
+            _log_row(row, "needs_address", None)
+            if not dry_run:
+                db.record_enrichment(
+                    conn, row["id"], address=resolved.city, lat=None, lon=None,
+                    address_source="needs_address", address_confidence=None,
+                    commute_minutes=None, commute_mode=None,
                     commute_strategies_json=None,
                 )
             return

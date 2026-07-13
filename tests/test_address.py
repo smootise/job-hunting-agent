@@ -83,12 +83,13 @@ def test_precise_street_from_description():
 
 
 def test_city_fallback_medium_confidence():
-    job = _job(location="Paris, Île-de-France")
-    client = _client_by_query([("paris", PARIS)])
+    job = _job(location="Boulogne-Billancourt")
+    boulogne = _ban("Boulogne-Billancourt", "92100", 2.24, 48.83)
+    client = _client_by_query([("boulogne", boulogne)])
     result = address.resolve_address(job, client=client)
     assert result.source == "wttj"  # tagged with the offer's source
     assert result.confidence == "medium"
-    assert result.city == "Paris" and result.in_idf
+    assert result.city == "Boulogne-Billancourt" and result.in_idf
 
 
 def test_out_of_region_city_flagged_approximate():
@@ -124,6 +125,53 @@ def test_street_miss_falls_back_to_city():
     assert result.source == "approximate" and result.confidence == "low"
 
 
+def test_bare_paris_is_needs_address_without_geocoding():
+    # Bare "Paris" is too vague — must skip geocoding entirely and flag for the
+    # Phase 3 agent. A client that explodes proves we never geocode it.
+    job = _job(location="Paris, Île-de-France", description="Poste sur site.")
+
+    def boom(request):
+        raise AssertionError("bare Paris must not be geocoded")
+
+    client = httpx.Client(transport=httpx.MockTransport(boom))
+    result = address.resolve_address(job, client=client)
+    assert result.source == "needs_address"
+    assert result.needs_address and not result.is_resolved
+    assert result.city == "Paris"
+
+
+def test_bare_paris_alone_is_needs_address():
+    job = _job(location="Paris", description="Sur site.")
+
+    def boom(request):
+        raise AssertionError("bare Paris must not be geocoded")
+
+    result = address.resolve_address(job, client=httpx.Client(transport=httpx.MockTransport(boom)))
+    assert result.needs_address
+
+
+def test_paris_arrondissement_still_routes():
+    # "Paris 11e" / "Paris 75011" carry real specificity → NOT vague, geocode them.
+    for loc in ["Paris 11e", "Paris 75011", "Paris 15"]:
+        job = _job(location=loc)
+        # geocode any query to a Paris-11e point.
+        p11 = _ban("Paris 11e Arrondissement", "75011", 2.38, 48.86)
+        result = address.resolve_address(job, client=_client_by_query([("paris", p11)]))
+        assert result.source == "wttj", f"{loc!r} should route, got {result.source}"
+        assert result.is_resolved
+
+
+def test_precise_street_in_paris_beats_vague_guard():
+    # A real street in Paris must still resolve (the bare-Paris guard only fires
+    # when all we have is the vague city).
+    job = _job(location="Paris, Île-de-France",
+               description="Bureaux: 10 rue de Rivoli, Paris.")
+    rivoli = _ban("10 Rue de Rivoli", "75004", 2.355, 48.855)
+    client = _client_by_query([("rivoli", rivoli), ("paris", PARIS)])
+    result = address.resolve_address(job, client=client)
+    assert result.source == "posting" and result.is_resolved
+
+
 def test_no_location_is_unresolved():
     job = _job(location=None, description=None)
     client = _client_by_query([])
@@ -134,7 +182,7 @@ def test_no_location_is_unresolved():
 def test_remote_tag_stripped_from_location():
     # "(remote: …)" tail shouldn't leak into the geocode query, but a hybrid tag
     # doesn't make the offer fully-remote, so we still resolve the city.
-    job = _job(location="Paris, Île-de-France", remote_tag=True,
+    job = _job(location="Boulogne-Billancourt", remote_tag=True,
                description="2 jours de télétravail par semaine.")
     captured = {}
 

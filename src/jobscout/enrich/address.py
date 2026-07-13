@@ -44,7 +44,7 @@ class ResolvedAddress:
     region check so the caller can flag out-of-region results.
     """
 
-    source: str  # posting | wttj | france_travail | linkedin_email | approximate | remote | unresolved
+    source: str  # posting | wttj | france_travail | linkedin_email | approximate | remote | needs_address | unresolved
     address: str | None = None
     lat: float | None = None
     lon: float | None = None
@@ -55,6 +55,16 @@ class ResolvedAddress:
     @property
     def is_remote(self) -> bool:
         return self.source == "remote"
+
+    @property
+    def needs_address(self) -> bool:
+        """A location too vague to route (bare 'Paris') — a Phase 3 worklist item.
+
+        Distinct from ``unresolved`` (no location text at all): here we *have* a
+        city, but it's a large commune whose centroid is a useless commute proxy,
+        so we deliberately skip routing and leave it for the address-research
+        agent to sharpen to a real street/arrondissement."""
+        return self.source == "needs_address"
 
     @property
     def is_resolved(self) -> bool:
@@ -99,6 +109,28 @@ def _street_from_description(description: str | None) -> str | None:
     return match.group(0).strip() if match else None
 
 
+# Bare "Paris" with no finer specificity. Paris spans ~105 km² and 20
+# arrondissements, so a centroid commute is meaningless — better to flag it for
+# the Phase 3 address agent than to store a confident-looking wrong number. We
+# match ONLY the bare city: "Paris 11e", "Paris 75011", "Paris 15" all carry real
+# arrondissement/postcode signal and are kept (arrondissement geocoding is
+# useful). A trailing digit or a "e"/"er"/"ème" ordinal means it's specific.
+_BARE_PARIS_RE = re.compile(r"^paris\b(?!\s*\d)(?!\s*(?:e|er|[eè]me)\b)$", re.IGNORECASE)
+
+
+def _is_too_vague_to_route(city: str | None) -> bool:
+    """True for a bare 'Paris' (no arrondissement/postcode) — skip routing.
+
+    Deliberately narrow (owner's decision: 'Paris' only, not every big city): a
+    bare-Paris centroid is the one case common enough in the data and vague
+    enough to be worse than useless. Anything with an arrondissement or postcode
+    is specific enough to route.
+    """
+    if not city:
+        return False
+    return _BARE_PARIS_RE.match(city.strip()) is not None
+
+
 def resolve_address(
     record: JobRecord,
     *,
@@ -106,12 +138,12 @@ def resolve_address(
 ) -> ResolvedAddress:
     """Resolve one offer's office location to coordinates (or remote/unresolved).
 
-    Order: remote short-circuit → precise street (from prose) → stated city →
-    city-centroid fallback. Every geocode is region-checked; an out-of-IDF hit is
-    returned (``in_idf=False``) rather than dropped, so the caller can flag it —
-    but we prefer an in-region city centroid over an out-of-region precise hit
-    when both exist. Fail-soft throughout: a geocode miss falls to the next step,
-    and exhausting the chain yields ``unresolved``.
+    Order: remote short-circuit → precise street (from prose) → bare-Paris
+    guard → stated city → city-centroid fallback. Every geocode is region-checked;
+    an out-of-IDF hit is returned (``in_idf=False``) rather than dropped, so the
+    caller can flag it — but we prefer an in-region city centroid over an
+    out-of-region precise hit when both exist. Fail-soft throughout: a geocode
+    miss falls to the next step, and exhausting the chain yields ``unresolved``.
     """
     # 1. Fully-remote → no address needed.
     if classify_remote_policy(record) == "remote":
@@ -121,6 +153,8 @@ def resolve_address(
     street = _street_from_description(record.description)
 
     # 2. Precise street address from prose (highest precision), biased by city.
+    # A real street wins even in Paris — the bare-Paris guard below only fires
+    # when all we have is the vague city.
     if street:
         query = f"{street}, {city}" if city else street
         hit = geocode.geocode(query, client=client)
@@ -130,7 +164,13 @@ def resolve_address(
                 city=hit.city or city, confidence="high", in_idf=True,
             )
 
-    # 3. Stated city resolved cleanly → tag with the source it came from.
+    # 3. Bare "Paris" with no street/arrondissement → too vague to route. Skip
+    # geocoding entirely and flag for the Phase 3 address agent (a city-centroid
+    # commute to "Paris" is a confident-looking wrong number).
+    if _is_too_vague_to_route(city):
+        return ResolvedAddress(source="needs_address", city=city)
+
+    # 4. Stated city resolved cleanly → tag with the source it came from.
     if city:
         hit = geocode.geocode(city, client=client)
         if hit is not None:
@@ -150,5 +190,5 @@ def resolve_address(
                 in_idf=False,
             )
 
-    # 4. Nothing usable.
+    # 5. Nothing usable.
     return ResolvedAddress(source="unresolved")

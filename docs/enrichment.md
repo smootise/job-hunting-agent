@@ -15,6 +15,7 @@ each with an injectable HTTP client) + `pipeline/enrich_commute.py`
 
 ```
 JobRecord ──▶ resolve_address ──┬─ remote?      → commute_minutes = 0, skip routing
+                                ├─ needs_address? → skip routing, flag for Phase 3
                                 ├─ resolved?    → plan_commute (3 strategies) → best
                                 └─ unresolved?  → leave NULL, fail-soft (retry next run)
 ```
@@ -22,14 +23,26 @@ JobRecord ──▶ resolve_address ──┬─ remote?      → commute_minute
 - **Address resolution** (`enrich/address.py`) is a deterministic chain:
   1. a **street address parsed from the posting prose** (conservative regex),
      geocoded and region-checked → `address_source='posting'`, high confidence;
-  2. the **stated city** geocoded → `medium` confidence, tagged with the offer's
+  2. **bare "Paris"** (no arrondissement/postcode/street) → **too vague to
+     route**: skip geocoding, `address_source='needs_address'`, commute NULL.
+     Paris spans 20 arrondissements — a centroid commute is a confident-looking
+     wrong number, so we flag it for the Phase 3 agent rather than store noise.
+     ("Paris 11e"/"Paris 75011" carry real specificity and *are* routed; the
+     guard is deliberately Paris-only, not every big city.);
+  3. the **stated city** geocoded → `medium` confidence, tagged with the offer's
      source (`wttj`/`france_travail`/…);
-  3. an **out-of-Île-de-France** hit is kept but flagged `approximate` / `low`
+  4. an **out-of-Île-de-France** hit is kept but flagged `approximate` / `low`
      (it can inform scoring but must never hard-reject — the brief's cardinal
      rule against a wrong address silently killing an offer);
-  4. nothing usable → `unresolved` (row left for a later run).
+  5. nothing usable → `unresolved` (row left for a later run).
   The online **address-research agent is deliberately Phase 3** (it's the warm-up
-  for the agent-loop machinery); this stage's city fallback stands in for it.
+  for the agent-loop machinery); this stage's city fallback stands in for it, and
+  the `needs_address` rows are its explicit worklist.
+
+  `needs_address` vs. `unresolved`: `needs_address` means "we *have* a location
+  but it's too vague to route" (stamped `enriched_at` → a stable worklist, not
+  re-tried every run); `unresolved` means "no usable location text at all" (left
+  retryable). Both carry a NULL commute.
 
 - **Geocoding** (`enrich/geocode.py`) is **Base Adresse Nationale**
   (`api-adresse.data.gouv.fr`) — free, keyless, official, France-accurate — and
@@ -110,7 +123,7 @@ privacy delta is nil (same single external recipient either way).
 ## Stored columns (on `jobs`)
 
 `address`, `lat`, `lon` (the **office**), `address_source`
-(`posting|wttj|france_travail|linkedin_email|approximate|remote|unresolved`),
+(`posting|wttj|france_travail|linkedin_email|approximate|remote|needs_address|unresolved`),
 `address_confidence` (`high|medium|low`), `commute_minutes` (headline, fastest),
 `commute_mode` (winning strategy), `commute_strategies` (JSON: all three +
 per-leg detail, for review), `enriched_at` (idempotency stamp — a re-run skips

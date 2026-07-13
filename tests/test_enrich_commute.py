@@ -54,7 +54,7 @@ def db_path(tmp_path):
     return tmp_path / "jobs.db"
 
 
-def _job(external_id, *, title="Product Manager", location="Paris, Île-de-France",
+def _job(external_id, *, title="Product Manager", location="Boulogne-Billancourt",
          description="Poste hybride, 2 jours de télétravail.", source="wttj"):
     return JobRecord(
         source=source, external_id=external_id, url=f"http://x/{external_id}",
@@ -168,6 +168,34 @@ def test_approximate_address_counted(db_path, prefs_path, env_path):
     _seed(db_path, [_job("1", location="Lyon", description="Sur site.")])
     summary = _run(db_path, prefs_path, env_path, geo=_geo_client(lyon))
     assert summary.enriched == 1 and summary.approximate == 1
+
+
+def test_bare_paris_flagged_needs_address_no_routing(db_path, prefs_path, env_path):
+    _seed(db_path, [_job("1", location="Paris, Île-de-France",
+                          description="Poste sur site à Paris.")])
+
+    def boom(request):
+        raise AssertionError("bare Paris must not route")
+
+    routing_client = httpx.Client(transport=httpx.MockTransport(boom))
+    summary = _run(db_path, prefs_path, env_path, routing=routing_client)
+    assert summary.needs_address == 1 and summary.enriched == 0 and summary.failed == 0
+
+    conn = db.connect(db_path)
+    row = conn.execute("SELECT address_source, commute_minutes, enriched_at FROM jobs WHERE external_id='1'").fetchone()
+    assert row["address_source"] == "needs_address"
+    assert row["commute_minutes"] is None       # no misleading centroid commute
+    assert row["enriched_at"] is not None        # stamped → stable worklist, not re-tried
+    conn.close()
+
+
+def test_needs_address_not_reprocessed_on_rerun(db_path, prefs_path, env_path):
+    _seed(db_path, [_job("1", location="Paris")])
+    boom = httpx.Client(transport=httpx.MockTransport(
+        lambda r: (_ for _ in ()).throw(AssertionError("no routing"))))
+    _run(db_path, prefs_path, env_path, routing=boom)
+    second = _run(db_path, prefs_path, env_path)  # default: skips enriched rows
+    assert second.considered == 0
 
 
 def test_idempotent_second_run(db_path, prefs_path, env_path):
