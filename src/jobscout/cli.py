@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 
-from jobscout.pipeline import enrich_linkedin, filter_stage, ingest
+from jobscout.pipeline import enrich_commute, enrich_linkedin, filter_stage, ingest
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -97,6 +97,29 @@ def main(argv: list[str] | None = None) -> None:
         help="Fetch/parse and report without writing descriptions or verdicts.",
     )
 
+    commute_parser = subparsers.add_parser(
+        "enrich-commute",
+        help="Resolve office addresses and compute commute times (Google Routes) "
+        "for passed/needs_review offers.",
+    )
+    commute_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Max offers to enrich this run (default: all pending).",
+    )
+    commute_parser.add_argument(
+        "--re-enrich",
+        action="store_true",
+        help="Re-enrich every enrichable offer, not just un-enriched ones "
+        "(use after editing home/commute in preferences.yaml).",
+    )
+    commute_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Resolve and route, report counts, write nothing.",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "ingest":
@@ -105,6 +128,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_filter(args)
     elif args.command == "enrich-linkedin":
         _run_enrich_linkedin(args)
+    elif args.command == "enrich-commute":
+        _run_enrich_commute(args)
     else:
         parser.print_help()
 
@@ -190,6 +215,31 @@ def _print_enrich_summary(summary: enrich_linkedin.EnrichSummary) -> None:
         print(f"  re-filtered: {summary.refiltered}  -> {changes}")
     if summary.considered == 0:
         print("  (nothing to enrich — all LinkedIn offers already have descriptions)")
+
+
+def _run_enrich_commute(args: argparse.Namespace) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    summary = enrich_commute.run_enrich_commute(
+        limit=args.limit,
+        re_enrich=args.re_enrich,
+        dry_run=args.dry_run,
+    )
+    _print_enrich_commute_summary(summary)
+
+
+def _print_enrich_commute_summary(summary: enrich_commute.EnrichCommuteSummary) -> None:
+    """Render the address/commute enrichment tally."""
+    mode = " (dry-run - nothing written)" if summary.dry_run else ""
+    scope = " [re-enrich: all enrichable]" if summary.re_enrich else ""
+    print(f"jobscout enrich-commute{mode}{scope}")
+    print(f"  considered:     {summary.considered}  (passed/needs_review, not yet enriched)")
+    print(f"  enriched:       {summary.enriched}  ({summary.remote_skipped} remote → commute 0, "
+          f"{summary.approximate} on approximate address)")
+    print(f"  failed:         {summary.failed}  (unresolved address or routing failure; "
+          f"left for a later run)")
+    if summary.considered == 0 and not summary.re_enrich:
+        print("  (nothing to enrich — all passed/needs_review offers already enriched; "
+              "use --re-enrich to redo)")
 
 
 if __name__ == "__main__":

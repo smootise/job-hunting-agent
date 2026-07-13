@@ -81,6 +81,15 @@ CREATE TABLE IF NOT EXISTS jobs (
     filter_status      TEXT,
     filter_reasons     TEXT,
     filtered_at        TEXT,
+    address            TEXT,
+    lat                REAL,
+    lon                REAL,
+    address_source     TEXT,
+    address_confidence TEXT,
+    commute_minutes    REAL,
+    commute_mode       TEXT,
+    commute_strategies TEXT,
+    enriched_at        TEXT,
     first_seen_at      TEXT    NOT NULL,
     last_seen_at       TEXT    NOT NULL,
     UNIQUE (source, external_id)
@@ -124,6 +133,16 @@ _ADDED_COLUMNS: dict[str, str] = {
     "filter_status": "TEXT",
     "filter_reasons": "TEXT",
     "filtered_at": "TEXT",
+    # Phase 2 address + commute enrichment.
+    "address": "TEXT",
+    "lat": "REAL",
+    "lon": "REAL",
+    "address_source": "TEXT",
+    "address_confidence": "TEXT",
+    "commute_minutes": "REAL",
+    "commute_mode": "TEXT",
+    "commute_strategies": "TEXT",  # JSON: all three strategies + per-leg detail.
+    "enriched_at": "TEXT",
 }
 
 
@@ -397,3 +416,66 @@ def backfill_description(
             "UPDATE jobs SET description = ? WHERE id = ?",
             (description, job_id),
         )
+
+
+# --------------------------------------------------------------------------
+# Phase 2 address + commute enrichment
+# --------------------------------------------------------------------------
+
+
+def select_jobs_to_enrich(
+    conn: sqlite3.Connection, *, limit: int | None = None, re_enrich: bool = False
+) -> list[sqlite3.Row]:
+    """Return offers awaiting commute enrichment (or all enrichable, re-enrich).
+
+    Default: rows that passed the hard filters (``filter_status`` in
+    ``passed``/``needs_review`` — the scorer judges the needs_review tail too, so
+    both deserve a commute) and haven't been enriched yet (``enriched_at IS
+    NULL``). This is the stage's idempotency, same shape as ``select_unfiltered_
+    jobs``: a re-run only picks up newly-passed offers. ``re_enrich=True`` selects
+    every enrichable row so a preferences.yaml commute change can be re-applied.
+    Rejected offers are never enriched (we don't spend API calls on them). Rows
+    carry every column, so ``JobRecord.from_row`` consumes them directly.
+    """
+    sql = "SELECT * FROM jobs WHERE filter_status IN ('passed', 'needs_review')"
+    if not re_enrich:
+        sql += " AND enriched_at IS NULL"
+    sql += " ORDER BY id"
+    if limit is not None:
+        sql += " LIMIT ?"
+        return conn.execute(sql, (limit,)).fetchall()
+    return conn.execute(sql).fetchall()
+
+
+def record_enrichment(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    address: str | None,
+    lat: float | None,
+    lon: float | None,
+    address_source: str | None,
+    address_confidence: str | None,
+    commute_minutes: float | None,
+    commute_mode: str | None,
+    commute_strategies_json: str | None,
+) -> None:
+    """Persist one offer's resolved address + commute result.
+
+    A plain UPDATE stamping ``enriched_at`` so the row drops out of
+    ``select_jobs_to_enrich`` on the next run (idempotency) and ``--re-enrich``
+    overwrites cleanly. Stores the headline ``commute_minutes``/``commute_mode``
+    for sorting/scoring plus the full ``commute_strategies`` JSON for review. The
+    caller commits (one commit per batch). NOTE: only commute *minutes* and the
+    (public) office address are stored here — never the home coordinates.
+    """
+    conn.execute(
+        "UPDATE jobs SET address = ?, lat = ?, lon = ?, address_source = ?, "
+        "address_confidence = ?, commute_minutes = ?, commute_mode = ?, "
+        "commute_strategies = ?, enriched_at = ? WHERE id = ?",
+        (
+            address, lat, lon, address_source, address_confidence,
+            commute_minutes, commute_mode, commute_strategies_json,
+            _utcnow(), job_id,
+        ),
+    )

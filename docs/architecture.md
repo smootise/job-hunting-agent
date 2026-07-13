@@ -24,8 +24,8 @@ framework in v1 — the loop is readable on purpose.
 | Normalize / dedupe / idempotent state | ✅ Phase 1 | `normalize.py`, `storage/db.py` |
 | Hard filters | ✅ Phase 2 | `pipeline/filters.py`, `pipeline/salary.py`, `pipeline/filter_stage.py` |
 | Enrich (LinkedIn descriptions) | ✅ Phase 2 | `adapters/linkedin_guest.py`, `pipeline/enrich_linkedin.py` |
-| Enrich (address + commute) | ⏳ Phase 2 | — |
-| LLM scoring | ⏳ Phase 2 | — |
+| Enrich (address + commute) | ✅ Phase 2 | `enrich/{geocode,address,routing}.py`, `pipeline/enrich_commute.py` — see `docs/enrichment.md` |
+| LLM scoring | ⏳ Phase 2 (next) | — |
 | Address-research agent | ⏳ Phase 3 | — |
 | Cover-letter agent | ⏳ Phase 3 | — |
 | Digest / scheduling / ops | ⏳ Phase 4 | — |
@@ -46,6 +46,10 @@ src/jobscout/
   adapters/linkedin_guest.py  pure parser for the public guest job-posting page
   pipeline/enrich_linkedin.py LinkedIn description backfill (guest endpoint,
                               cached, rate-limited, fail-soft, auto re-filter)
+  enrich/geocode.py    Base Adresse Nationale geocoder + IDF region check
+  enrich/address.py    deterministic office-address resolution chain
+  enrich/routing.py    Google Routes wrapper + three-strategy commute planner
+  pipeline/enrich_commute.py  address+commute enrichment orchestration
   cli.py             `jobscout` entry point
   llm/client.py      thin Ollama wrapper with full-interaction logging
 ```
@@ -74,10 +78,13 @@ place. Markdown outputs (`output/digests/`, `output/letters/`) arrive later.
 ## Current state & next: LLM scoring
 
 Done in Phase 2 so far: **hard filters** (`pipeline/filters.py` + `salary.py` +
-`filter_stage.py`, CLI `jobscout filter`) and **LinkedIn description enrichment**
+`filter_stage.py`, CLI `jobscout filter`), **LinkedIn description enrichment**
 (`adapters/linkedin_guest.py` + `pipeline/enrich_linkedin.py`, CLI
-`jobscout enrich-linkedin`). On the real 144-offer DB the pipeline currently
-yields ~72 passed / ~33 needs_review / ~39 rejected.
+`jobscout enrich-linkedin`), and **address + commute enrichment**
+(`enrich/{geocode,address,routing}.py` + `pipeline/enrich_commute.py`, CLI
+`jobscout enrich-commute` — full detail in `docs/enrichment.md`). On the real
+144-offer DB the filter stage yields ~72 passed / ~33 needs_review / ~39
+rejected; commute enrichment then runs on the ~105 passed+needs_review.
 
 **Next stage is LLM scoring** — for `filter_status='passed'` (and arguably
 `needs_review`) offers, call `qwen3.6:35b-a3b` (zero tools) with the
@@ -98,12 +105,18 @@ Two decisions from the filter/enrichment work that the scorer must honor:
    onsite-days for `weekly_commute_fit` anyway, so it is the right place to
    judge the remote policy of these silent offers — not more regex.
 
-2. **`weekly_commute_fit` needs `commute_minutes`, which doesn't exist yet.**
-   Address/commute enrichment (the other unbuilt Phase 2 stage) writes one-way
-   `commute_minutes` to the job record. Until it lands, the scorer has no
-   commute number. Options for the scoring stage: score the other criteria and
-   have the scorer note the commute assumption, treat fully-remote as commute 0,
-   or sequence commute-enrichment first. Decide this at the start of scoring.
+2. **`weekly_commute_fit` gets `commute_minutes` from enrichment (now built).**
+   `jobscout enrich-commute` writes a headline `commute_minutes`/`commute_mode`
+   (fastest of three strategies) plus a `commute_strategies` JSON blob to each
+   passed/needs_review row (`docs/enrichment.md`). **Decision made at the owner's
+   request: `weekly_commute_fit` is computed in Python (a deterministic curve
+   over `commute_minutes × 2 × onsite_days`), NOT by the LLM** — so a better
+   address or a changed threshold rescoring is pure math, no LLM call. The LLM
+   still infers `onsite_days` from the posting and scores the qualitative
+   criteria. Fully-remote offers already carry `commute_minutes = 0`. Offers with
+   a NULL commute (routing failed / address unresolved) should be scored with the
+   commute criterion flagged, not zeroed. Note `address_confidence='low'` /
+   `address_source='approximate'` marks an estimated commute for review.
 
 Contract note for the scorer's inputs: an offer may carry a `filter_reasons`
 entry "contract type not stated; assumed CDI" (from `assume_cdi_when_unstated`).
