@@ -11,7 +11,31 @@ meta:
 
 home:
   label: "REPLACE_WITH_YOUR_COMMUTE_ANCHOR" # e.g. a train/metro station name.
-  commute_modes: ["transit", "driving"] # Order = preferred estimation order.
+  # Your home address — the commute origin. Geocoded once (via Base Adresse
+  # Nationale) to coordinates the routing provider needs. This is the only
+  # home-address data anywhere, it lives only in this gitignored file, and it
+  # is sent to exactly one external service (Google Routes) for routing — never
+  # to an LLM, log, digest, or letter (those see commute *minutes* only).
+  address: "REPLACE_WITH_YOUR_HOME_ADDRESS" # e.g. "12 rue de la Paix, 75002 Paris"
+  # Optional: skip geocoding by pinning coordinates directly (WGS84). If set,
+  # `address` is not geocoded. Leave null to geocode `address` instead.
+  lat: null
+  lon: null
+
+commute: # How the enrichment stage estimates commute time. See docs/enrichment.md.
+  # Three strategies are computed per offer and all stored for review; the
+  # fastest becomes the offer's headline commute_minutes:
+  #   bike_only   — door-to-door by bike (a fast e-scooter ≈ Google bike time).
+  #   bike_hybrid — rail/RER line-haul, bike/scooter for slow connector legs.
+  #   no_bike     — plain public transport (any mode). The baseline.
+  # The two bounds below decide when a leg is biked vs. walked vs. ruled out.
+  # ZERO OR NULL DISABLES THE GUARD (never a bare comparison):
+  min_bike_walk_minutes: 12  # Walk (don't bother with the scooter) any connector
+                             # whose WALK time is <= this. 0/null = no lower gate.
+  max_bike_distance_km: 10   # Never bike a single leg longer than this (km);
+                             # take transit instead. 0/null = disable biking
+                             # entirely (skip bike_only + bike_hybrid, no bike
+                             # API calls at all).
 
 hard_filters: # ONLY certainties — these reject offers outright.
   remote_policy:

@@ -51,9 +51,15 @@ def _utcnow() -> str:
 # Columns fall into two groups:
 #   - the 11 source fields from JobRecord (the adapter contract), and
 #   - bookkeeping the pipeline owns: surrogate id, first/last seen timestamps,
-#     the normalized dedupe keys, dup_group, and status.
-# Later phases add enrichment/scoring columns; creating the bookkeeping ones
-# now keeps the schema stable so those additions are purely additive.
+#     the normalized dedupe keys, dup_group, status, and the Phase 2
+#     hard-filter verdict (filter_status/filter_reasons/filtered_at).
+# Later phases add enrichment/scoring columns the same way. Additions are
+# purely additive; `_migrate_add_columns` backfills them on an existing DB.
+#
+# Note the deliberate separation of `status` (offer lifecycle: 'new', later
+# 'scored'/'drafted') from `filter_status` ('passed'|'needs_review'|'rejected',
+# NULL until filtered). They are orthogonal concerns — overloading one column
+# would entangle the filter stage with everything downstream.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
     id                 INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -72,6 +78,18 @@ CREATE TABLE IF NOT EXISTS jobs (
     normalized_title   TEXT    NOT NULL,
     dup_group          INTEGER,
     status             TEXT    NOT NULL DEFAULT 'new',
+    filter_status      TEXT,
+    filter_reasons     TEXT,
+    filtered_at        TEXT,
+    address            TEXT,
+    lat                REAL,
+    lon                REAL,
+    address_source     TEXT,
+    address_confidence TEXT,
+    commute_minutes    REAL,
+    commute_mode       TEXT,
+    commute_strategies TEXT,
+    enriched_at        TEXT,
     first_seen_at      TEXT    NOT NULL,
     last_seen_at       TEXT    NOT NULL,
     UNIQUE (source, external_id)
@@ -106,11 +124,53 @@ def connect(path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     return conn
 
 
+# Columns added after the original Phase 1 schema shipped. `CREATE TABLE IF NOT
+# EXISTS` won't add columns to a table that already exists, so an existing
+# `data/jobs.db` from Phase 1 needs these backfilled with ALTER TABLE. Keyed by
+# column name → its type/definition. Adding a Phase 3 column is a one-line edit
+# here.
+_ADDED_COLUMNS: dict[str, str] = {
+    "filter_status": "TEXT",
+    "filter_reasons": "TEXT",
+    "filtered_at": "TEXT",
+    # Phase 2 address + commute enrichment.
+    "address": "TEXT",
+    "lat": "REAL",
+    "lon": "REAL",
+    "address_source": "TEXT",
+    "address_confidence": "TEXT",
+    "commute_minutes": "REAL",
+    "commute_mode": "TEXT",
+    "commute_strategies": "TEXT",  # JSON: all three strategies + per-leg detail.
+    "enriched_at": "TEXT",
+}
+
+
 def init_schema(conn: sqlite3.Connection) -> None:
-    """Create tables/indexes if absent. Separated so tests can call it on an
-    in-memory connection without touching the filesystem."""
+    """Create tables/indexes if absent, then backfill any newer columns.
+
+    Separated so tests can call it on an in-memory connection without touching
+    the filesystem. Idempotent: a fresh DB gets the columns from `_SCHEMA`; an
+    existing Phase 1 DB gets them from `_migrate_add_columns`; a current DB is
+    left untouched.
+    """
     conn.executescript(_SCHEMA)
+    _migrate_add_columns(conn)
     conn.commit()
+
+
+def _migrate_add_columns(conn: sqlite3.Connection) -> None:
+    """ALTER TABLE ADD COLUMN for any `_ADDED_COLUMNS` the `jobs` table lacks.
+
+    Reads the live column set via PRAGMA and adds only what's missing, so this
+    is safe to run on every connect regardless of how old the DB is. New columns
+    are nullable with no default, so the ALTER is instant and existing rows read
+    NULL (== 'not yet filtered'), which is exactly the intended initial state.
+    """
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(jobs)")}
+    for column, definition in _ADDED_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} {definition}")
 
 
 # --------------------------------------------------------------------------
@@ -254,3 +314,168 @@ def record_run_finish(
         (_utcnow(), json.dumps(source_counts, ensure_ascii=False), run_id),
     )
     conn.commit()
+
+
+# --------------------------------------------------------------------------
+# Phase 2 hard-filter verdicts
+# --------------------------------------------------------------------------
+
+
+def select_unfiltered_jobs(
+    conn: sqlite3.Connection, *, limit: int | None = None, refilter: bool = False
+) -> list[sqlite3.Row]:
+    """Return jobs awaiting a filter verdict (or all jobs when refiltering).
+
+    Default: rows with ``filter_status IS NULL`` — the ones not yet judged. This
+    is what makes the filter stage idempotent: a re-run picks up only newly
+    ingested offers, exactly like ingest's "new since last run" is decided by
+    the DB. ``refilter=True`` selects every job so a preferences.yaml change can
+    be re-applied to the whole table. Rows are dict-like ``sqlite3.Row`` and
+    carry every column, so ``JobRecord.from_row`` can consume them directly.
+    """
+    sql = "SELECT * FROM jobs"
+    if not refilter:
+        sql += " WHERE filter_status IS NULL"
+    sql += " ORDER BY id"
+    if limit is not None:
+        sql += " LIMIT ?"
+        return conn.execute(sql, (limit,)).fetchall()
+    return conn.execute(sql).fetchall()
+
+
+def record_filter_verdict(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    filter_status: str,
+    filter_reasons_json: str,
+) -> None:
+    """Persist one offer's hard-filter verdict.
+
+    Writes the aggregate status, the reasons JSON (every firing filter, so
+    nothing is dropped unexplained — the transparency invariant), and a
+    timestamp. A plain UPDATE, so re-running ``--refilter`` overwrites cleanly
+    and idempotently. The caller commits (one commit per batch)."""
+    conn.execute(
+        "UPDATE jobs SET filter_status = ?, filter_reasons = ?, filtered_at = ? "
+        "WHERE id = ?",
+        (filter_status, filter_reasons_json, _utcnow(), job_id),
+    )
+
+
+# --------------------------------------------------------------------------
+# LinkedIn description enrichment (guest-endpoint backfill)
+# --------------------------------------------------------------------------
+
+
+def select_jobs_missing_description(
+    conn: sqlite3.Connection,
+    *,
+    source: str = "linkedin_email",
+    limit: int | None = None,
+) -> list[sqlite3.Row]:
+    """Return rows for one source that have no stored description yet.
+
+    The enrichment step's work list. Selecting on ``description IS NULL`` is
+    what makes the fetch cheap and idempotent: an offer we already backfilled is
+    skipped, so a re-run only touches jobs still missing prose. This is the same
+    "novelty lives in the DB" idempotency the ingest and filter stages use, and
+    it doubles as the fetch cache — we never re-hit a job we've enriched. Rows
+    carry every column, so ``JobRecord.from_row`` consumes them directly.
+    """
+    sql = "SELECT * FROM jobs WHERE source = ? AND (description IS NULL OR description = '')"
+    sql += " ORDER BY id"
+    if limit is not None:
+        sql += " LIMIT ?"
+        return conn.execute(sql, (source, limit)).fetchall()
+    return conn.execute(sql, (source,)).fetchall()
+
+
+def backfill_description(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    description: str,
+    contract_type: str | None = None,
+) -> None:
+    """Fill in a fetched ``description`` (and optionally ``contract_type``).
+
+    Only ever *adds* information: writes the description, and updates
+    ``contract_type`` only when a real one was resolved (``None`` leaves the
+    existing value untouched — we never overwrite a stated contract with
+    nothing, nor invent one). Never touches the original source fields beyond
+    these. The caller commits.
+    """
+    if contract_type is not None:
+        conn.execute(
+            "UPDATE jobs SET description = ?, contract_type = ? WHERE id = ?",
+            (description, contract_type, job_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE jobs SET description = ? WHERE id = ?",
+            (description, job_id),
+        )
+
+
+# --------------------------------------------------------------------------
+# Phase 2 address + commute enrichment
+# --------------------------------------------------------------------------
+
+
+def select_jobs_to_enrich(
+    conn: sqlite3.Connection, *, limit: int | None = None, re_enrich: bool = False
+) -> list[sqlite3.Row]:
+    """Return offers awaiting commute enrichment (or all enrichable, re-enrich).
+
+    Default: rows that passed the hard filters (``filter_status`` in
+    ``passed``/``needs_review`` — the scorer judges the needs_review tail too, so
+    both deserve a commute) and haven't been enriched yet (``enriched_at IS
+    NULL``). This is the stage's idempotency, same shape as ``select_unfiltered_
+    jobs``: a re-run only picks up newly-passed offers. ``re_enrich=True`` selects
+    every enrichable row so a preferences.yaml commute change can be re-applied.
+    Rejected offers are never enriched (we don't spend API calls on them). Rows
+    carry every column, so ``JobRecord.from_row`` consumes them directly.
+    """
+    sql = "SELECT * FROM jobs WHERE filter_status IN ('passed', 'needs_review')"
+    if not re_enrich:
+        sql += " AND enriched_at IS NULL"
+    sql += " ORDER BY id"
+    if limit is not None:
+        sql += " LIMIT ?"
+        return conn.execute(sql, (limit,)).fetchall()
+    return conn.execute(sql).fetchall()
+
+
+def record_enrichment(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    address: str | None,
+    lat: float | None,
+    lon: float | None,
+    address_source: str | None,
+    address_confidence: str | None,
+    commute_minutes: float | None,
+    commute_mode: str | None,
+    commute_strategies_json: str | None,
+) -> None:
+    """Persist one offer's resolved address + commute result.
+
+    A plain UPDATE stamping ``enriched_at`` so the row drops out of
+    ``select_jobs_to_enrich`` on the next run (idempotency) and ``--re-enrich``
+    overwrites cleanly. Stores the headline ``commute_minutes``/``commute_mode``
+    for sorting/scoring plus the full ``commute_strategies`` JSON for review. The
+    caller commits (one commit per batch). NOTE: only commute *minutes* and the
+    (public) office address are stored here — never the home coordinates.
+    """
+    conn.execute(
+        "UPDATE jobs SET address = ?, lat = ?, lon = ?, address_source = ?, "
+        "address_confidence = ?, commute_minutes = ?, commute_mode = ?, "
+        "commute_strategies = ?, enriched_at = ? WHERE id = ?",
+        (
+            address, lat, lon, address_source, address_confidence,
+            commute_minutes, commute_mode, commute_strategies_json,
+            _utcnow(), job_id,
+        ),
+    )

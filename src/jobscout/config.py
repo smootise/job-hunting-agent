@@ -123,3 +123,110 @@ def imap_credentials(env: dict[str, str] | None = None) -> ImapCredentials:
         env, "IMAP_HOST", "IMAP_USER", "IMAP_APP_PASSWORD"
     )
     return ImapCredentials(host, user, password)
+
+
+def google_routes_key(env: dict[str, str] | None = None) -> str:
+    """The Google Routes API key, or a clear error if not configured.
+
+    Same fail-loud pattern as the other credential getters: a run that reaches
+    commute enrichment without a key fails at startup with an actionable message
+    rather than deep inside an HTTP 403. This is the single external service that
+    receives the owner's home coordinates (see docs/enrichment.md)."""
+    env = env if env is not None else load_env()
+    (key,) = _require(env, "GOOGLE_ROUTES_KEY")
+    return key
+
+
+# --------------------------------------------------------------------------
+# Commute-enrichment preferences (home origin + bike tunables)
+# --------------------------------------------------------------------------
+#
+# Like the hard filters, the *interpretation* of these fields lives close to
+# their usage — but two pieces are subtle enough to centralize here so every
+# consumer reads them identically:
+#   * the home origin can be given as an address (geocoded later) OR as pinned
+#     lat/lon (skip geocoding); and
+#   * the two bike bounds follow the project's null/0-disables convention
+#     (CLAUDE.md), so a consumer must never write a bare `if leg > bound`.
+
+
+@dataclass(frozen=True)
+class HomeLocation:
+    """The commute origin as configured. Exactly one of (lat & lon) or address
+    is authoritative: if ``lat``/``lon`` are set they win and no geocoding is
+    needed; otherwise ``address`` is geocoded once by the enrichment stage."""
+
+    label: str | None
+    address: str | None
+    lat: float | None
+    lon: float | None
+
+    @property
+    def has_coords(self) -> bool:
+        return self.lat is not None and self.lon is not None
+
+
+@dataclass(frozen=True)
+class CommutePrefs:
+    """The two bike bounds, already interpreted for the null/0-disables rule.
+
+    ``min_bike_walk_minutes``/``max_bike_distance_km`` are ``None`` when the
+    guard is disabled (config value absent, null, or 0), so consumers branch on
+    ``bike_enabled`` / ``has_walk_gate`` rather than comparing against 0 — the
+    trap CLAUDE.md warns about (a bare ``leg > 0`` would bike/skip everything).
+    """
+
+    min_bike_walk_minutes: float | None
+    max_bike_distance_km: float | None
+
+    @property
+    def bike_enabled(self) -> bool:
+        """False when biking is disabled outright (``max_bike_distance_km``
+        0/null): the ``bike_only``/``bike_hybrid`` strategies are skipped and no
+        bike routing call is ever made."""
+        return self.max_bike_distance_km is not None
+
+    @property
+    def has_walk_gate(self) -> bool:
+        """False when there's no lower walk gate (``min_bike_walk_minutes``
+        0/null): every leg within the distance bound may bike."""
+        return self.min_bike_walk_minutes is not None
+
+
+def _positive_or_none(value: object) -> float | None:
+    """A config number, or None when absent/null/0/negative (guard disabled).
+
+    Centralizes the null/0-disables reading so no consumer re-implements it as a
+    bare comparison. Non-numeric or non-positive → None == 'this guard is off'.
+    """
+    if value is None:
+        return None
+    try:
+        num = float(value)
+    except (TypeError, ValueError):
+        return None
+    return num if num > 0 else None
+
+
+def home_location(prefs: dict[str, Any] | None = None) -> HomeLocation:
+    """Read the home origin from ``preferences.yaml``'s ``home:`` block."""
+    prefs = prefs if prefs is not None else load_preferences()
+    home = (prefs or {}).get("home", {}) or {}
+    lat = home.get("lat")
+    lon = home.get("lon")
+    return HomeLocation(
+        label=home.get("label"),
+        address=home.get("address"),
+        lat=float(lat) if lat is not None else None,
+        lon=float(lon) if lon is not None else None,
+    )
+
+
+def commute_prefs(prefs: dict[str, Any] | None = None) -> CommutePrefs:
+    """Read the ``commute:`` block, applying the null/0-disables convention."""
+    prefs = prefs if prefs is not None else load_preferences()
+    commute = (prefs or {}).get("commute", {}) or {}
+    return CommutePrefs(
+        min_bike_walk_minutes=_positive_or_none(commute.get("min_bike_walk_minutes")),
+        max_bike_distance_km=_positive_or_none(commute.get("max_bike_distance_km")),
+    )

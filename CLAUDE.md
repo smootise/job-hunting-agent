@@ -7,8 +7,10 @@ The full design rationale, phases, and learning goals live in `docs/job-scout-pr
 
 ## Current state
 
-- **Phase 0 (setup) and Phase 1 (ingestion & state) are done.** Phase 2 (hard filters, enrichment, scoring) is next; see the brief for the phase plan.
-- **What runs today:** `jobscout ingest` fetches all three sources (WTTJ, France Travail, LinkedIn alert emails), dedupes, and stores new offers idempotently in `data/jobs.db`. `--dry-run` and `--source` flags exist.
+- **Phase 0, Phase 1, and Phase 2's hard filters + LinkedIn description enrichment + address/commute enrichment are done.** **Next up: LLM scoring** (see the handoff in `docs/architecture.md` → "Current state & next: LLM scoring" for the two decisions the scorer must honor — it owns remote-policy inference for the ~33 silent offers, and `weekly_commute_fit` is computed in **Python** from the now-available `commute_minutes`, not by the LLM). Address/commute enrichment shipped via **Google Routes for all modes** (transit + traffic-aware driving + bike), a deliberate deviation from the brief's PRIM+OSRM plan — full rationale + security invariants in `docs/enrichment.md`. See the brief for the phase plan.
+- **What runs today:** `jobscout ingest` fetches all three sources (WTTJ, France Travail, LinkedIn alert emails), dedupes, and stores new offers idempotently in `data/jobs.db`. `jobscout filter` then applies the `preferences.yaml` hard filters to stored offers and records a verdict (`filter_status` passed|needs_review|rejected + `filter_reasons` JSON) on each — idempotent, with `--refilter` and `--dry-run`. `jobscout enrich-linkedin` backfills LinkedIn offer descriptions from LinkedIn's **public no-login guest endpoint** (`jobs-guest/jobs/api/jobPosting/{id}`) — cached under `data/linkedin_guest/`, rate-limited (sequential + jittered delay + `--limit`), fail-soft, and auto re-filters enriched rows. `jobscout enrich-commute` resolves each passed/needs_review offer's office address (posting/city → **Base Adresse Nationale** geocode, city-centroid fallback flagged `approximate`) and computes commute time via **Google Routes** as the fastest of three strategies (`no_bike` / `bike_only` / `bike_hybrid`), storing `commute_minutes` + a `commute_strategies` JSON blob — idempotent, `--re-enrich`/`--dry-run`, fail-soft (see `docs/enrichment.md`). Ingest also has `--dry-run`/`--source`.
+- **LinkedIn nuance:** the alert *emails* carry no description (see `docs/ingest.md`); `enrich-linkedin` fills them from the guest endpoint. This is the brief-permitted "public guest endpoint, low volume" path — **not** account automation or authenticated scraping. The guest page's `Employment type` ("Full-time") is a *schedule*, not a contract, so it maps to `None` — we never invent a CDI, so most LinkedIn offers correctly stay `needs_review` on contract even after enrichment. The win is a description for the scorer, not a lower needs_review count.
+- **Before touching the hard filters**, note the preference-interpretation traps below are enforced by tests in `tests/test_filters.py` / `tests/test_salary.py` (whole-token seniority, salary upper-bound + ×12/13/14 annualization, null/0-disables, absence→needs_review). The pure logic is `pipeline/filters.py` + `pipeline/salary.py`; orchestration is `pipeline/filter_stage.py`.
 - **Code map:** `adapters/` (one module per source), `normalize.py` (shared language/dedupe/contract helpers), `storage/db.py` (schema + idempotent upsert), `pipeline/ingest.py` (orchestration), `cli.py`. Tests in `tests/` run offline against fixtures.
 - **Before touching ingestion**, read `docs/ingest.md` — it captures the as-built adapters, the record→DB flow, and hard-won API quirks (WTTJ Referer header, France Travail region/range, contract-`None` rule). Don't re-derive those.
 
@@ -22,6 +24,7 @@ The full design rationale, phases, and learning goals live in `docs/job-scout-pr
 - **No LinkedIn account automation, no secondary accounts.** LinkedIn data comes only from job-alert emails the owner receives (read-only IMAP, dedicated folder) and optionally the public guest endpoint at low volume.
 - **Transparency over magic.** No agent framework in v1 — the agent loop is hand-rolled and readable. This is a learning project; explicit beats clever.
 - When a design decision has a real trade-off, **surface it to the owner** instead of silently choosing.
+- **Always ask permission before writing or updating the plan file during planning.** The owner usually has more to add when they see a plan taking shape; don't finalize it unprompted. (Clarifying questions are always fine — the gate is specifically on committing the plan.)
 
 ---
 
@@ -61,7 +64,9 @@ The file is config data. Several fields have **non-obvious semantics** — imple
 
 ### `hard_filters.contract_types`
 - Keep only offers whose contract type is in the list.
-- When contract type is **unstated** (common in French postings, where CDI is often implied), **mark `needs_review` rather than dropping** — rejecting on absence is a false-negative risk, same principle as salary below.
+- When contract type is **unstated** (common in French postings, where CDI is often implied), behavior depends on the sibling flag **`assume_cdi_when_unstated`**:
+  - `false` (the cautious default) → **mark `needs_review` rather than dropping** — rejecting on absence is a false-negative risk, same principle as salary below.
+  - `true` (**currently set**, when `CDI` is in `contract_types`) → **pass, assuming CDI**, but emit a PASSED-outcome audit reason ("contract type not stated; assumed CDI") so the digest can show "CDI (assumed)" and the scorer knows it wasn't stated. The owner accepts a rare false-positive (a CDD reaching human review) to eliminate a manual gate on the ~99% of unstated FR postings that are CDI. Never invent a contract *other* than CDI, and never assume when CDI isn't an accepted type.
 
 ### `hard_filters.salary_floor_eur`
 - **Apply only to offers that STATE a salary.** If no salary is stated, **skip the check** — do not reject. (The scorer handles unpriced offers leniently.)
@@ -69,6 +74,7 @@ The file is config data. Several fields have **non-obvious semantics** — imple
 
 ### `hard_filters.remote_policy`
 - With `accept_onsite/hybrid/remote` all `true` and `min_remote_days_per_week: 0`, this filter currently accepts everything **by design** (flexibility is scored, not filtered). Still implement it generally, so flipping a flag to `false` actually filters.
+- **Classification reads both `location` and the `description` prose** (`classify_remote_policy`), since French postings usually state the policy in the body ("2 jours de télétravail par semaine", "100% présentiel"). Precedence: onsite-negation → hybrid → full-remote → else `unknown`. A genuinely undeterminable policy stays **`unknown` → `needs_review`, never a reject** — we do **not** assume onsite-when-unstated, because that would (a) silently mislabel hybrid/remote jobs, (b) poison the `weekly_commute_fit` score (which multiplies by onsite days), and (c) hard-reject unstated offers the moment `accept_onsite` is set `false`. Reading the prose resolves most cases correctly; the small honest residue is reviewed.
 
 ### `scoring_rubric`
 - **Weights are relative** — normalize before combining (current sum is 73, not 100). Don't assume they total 100.
