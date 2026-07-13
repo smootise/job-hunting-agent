@@ -14,7 +14,10 @@ rationale and phase plan.
 
 - ✅ **Phase 0** — setup + model bake-off (`qwen3.6:35b-a3b` chosen; see `scripts/bakeoff/README.md`).
 - ✅ **Phase 1** — ingestion & state: three source adapters, SQLite storage, dedupe, idempotent runs.
-- ⏳ **Phase 2** — hard filters, address/commute enrichment, LLM scoring (next).
+- 🔨 **Phase 2** (in progress) — hard filters ✅, LinkedIn description enrichment ✅, address + commute enrichment ✅ (Google Routes, three commute strategies — see `docs/enrichment.md`). **LLM scoring** is the remaining piece.
+- ⏳ **Phase 3** — the two agents (address research, then cover-letter drafting).
+
+See `docs/architecture.md` for what exists now and the current stage-by-stage status.
 
 ## Setup
 
@@ -23,6 +26,11 @@ uv sync
 cp preferences.example.yaml preferences.yaml   # then edit with your own values
 cp .env.example .env                            # then fill in real credentials
 ```
+
+In `preferences.yaml`, set your **home address** under `home:` (or pin
+`home.lat`/`home.lon`) — it's the commute origin. It stays in this gitignored
+file and is sent only to the routing provider; commute *minutes*, never the
+address, flow into scoring/digests/letters.
 
 Drop your master cover letters and CV into `profile/` (see `profile/README.md`).
 
@@ -41,10 +49,21 @@ Drop your master cover letters and CV into `profile/` (see `profile/README.md`).
 
   The pipeline only ever reads this folder (never marks, moves, or deletes
   mail). It parses both native and forwarded alert emails.
+- **Google Routes** (commute enrichment) — in a Google Cloud project with
+  billing enabled, turn on the **Routes API**, create an API key, and set
+  `GOOGLE_ROUTES_KEY`. The free tier easily covers job-hunt volume; set a budget
+  cap so it can never charge. Validate it before a real run with
+  `uv run python scripts/routes_smoke.py`. Geocoding uses **Base Adresse
+  Nationale** (free, keyless — no credential needed). See `docs/enrichment.md`
+  for why routing consolidated onto Google, and the home-address privacy rules.
 
 ## Usage
 
-Ingest new offers into `data/jobs.db`:
+The pipeline runs as a sequence of commands, each reading the previous stage's
+results from `data/jobs.db`. Every command is **idempotent** (a re-run only
+processes offers not already handled) and has `--dry-run`.
+
+**1. Ingest** new offers into `data/jobs.db`:
 
 ```
 uv run jobscout ingest                          # all configured sources
@@ -52,10 +71,40 @@ uv run jobscout ingest --source wttj --limit 20 # one source, capped
 uv run jobscout ingest --dry-run                # fetch + report, write nothing
 ```
 
-Runs are **idempotent** — re-running only records offers not already stored
-("new since last run" = not in the DB). The command prints a per-source
-summary (fetched / new / seen-again). A dead source is reported as failed
-without aborting the others.
+"New since last run" = not in the DB. Prints a per-source summary (fetched /
+new / seen-again); a dead source is reported failed without aborting the others.
+
+**2. Filter** stored offers against the `preferences.yaml` hard filters
+(contract, salary floor, seniority keywords, remote policy):
+
+```
+uv run jobscout filter              # judge newly-ingested offers
+uv run jobscout filter --refilter   # re-judge all (after editing preferences)
+```
+
+Each offer gets a `passed` / `needs_review` / `rejected` verdict with reasons.
+
+**3. Enrich LinkedIn descriptions** from the public guest endpoint (LinkedIn
+alert emails carry no description). Rate-limited, cached, auto re-filters:
+
+```
+uv run jobscout enrich-linkedin --limit 25
+```
+
+**4. Enrich address + commute** for passed/needs_review offers — resolves the
+office address (Base Adresse Nationale) and computes commute time via Google
+Routes as the fastest of three strategies (transit / bike / rail+bike hybrid):
+
+```
+uv run jobscout enrich-commute              # enrich pending offers
+uv run jobscout enrich-commute --re-enrich  # redo all (after editing home/commute prefs)
+```
+
+Bare "Paris" (too vague to route) is flagged for a later, more precise pass.
+See `docs/enrichment.md` for the commute model and tunable bike bounds.
+
+**5. LLM scoring** — *not yet built* (the remaining Phase 2 piece). Will score
+each surviving offer against the `preferences.yaml` rubric via local Ollama.
 
 ## Tests
 
