@@ -129,6 +129,27 @@ privacy delta is nil (same single external recipient either way).
 per-leg detail, for review), `enriched_at` (idempotency stamp — a re-run skips
 enriched rows; `--re-enrich` redoes all).
 
+## What the LLM scorer consumes (handoff)
+
+The next stage (`weekly_commute_fit`) reads `commute_minutes` and is **computed
+in Python, not by the LLM** (owner's decision — a deterministic curve over
+`one-way × 2 × onsite_days`, so re-scoring after a better address is free). What
+a scoring run finds per `address_source`:
+
+- `remote` → `commute_minutes = 0` → max score on the criterion.
+- a routed source (`posting`/`wttj`/`france_travail`/`linkedin_email`) → a real
+  number; `approximate` (confidence `low`) is a *usable but estimated* number —
+  score it, flag it for review.
+- `needs_address` or a NULL `commute_minutes` (routing failed / `unresolved`) →
+  **no usable commute: unknown, not zero.** Flag the criterion; never max it or
+  tank it. These are exactly the rows the Phase 3 address agent will sharpen,
+  after which a `--rescore` recomputes the curve.
+
+The LLM still infers `onsite_days` from the posting and scores the qualitative
+criteria; `weekly_commute_fit` stays out of its JSON schema and is blended into
+the weighted total afterward. See `docs/architecture.md` → "Current state & next"
+for the full scoring handoff.
+
 ## Departure time
 
 A single representative weekday-morning arrival (~09:00 Europe/Paris) for both

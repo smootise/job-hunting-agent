@@ -84,15 +84,20 @@ Done in Phase 2 so far: **hard filters** (`pipeline/filters.py` + `salary.py` +
 (`enrich/{geocode,address,routing}.py` + `pipeline/enrich_commute.py`, CLI
 `jobscout enrich-commute` — full detail in `docs/enrichment.md`). On the real
 144-offer DB the filter stage yields ~72 passed / ~33 needs_review / ~39
-rejected; commute enrichment then runs on the ~105 passed+needs_review.
+rejected; commute enrichment ran on the 105 passed+needs_review, of which a live
+run enriched ~72 (18 remote → commute 0), flagged 3 bare-Paris as `needs_address`,
+and left ~30 retryable (unresolved LinkedIn locations / uncgeocodable cities).
 
-**Next stage is LLM scoring** — for `filter_status='passed'` (and arguably
-`needs_review`) offers, call `qwen3.6:35b-a3b` (zero tools) with the
-`preferences.yaml` rubric + the offer, and store schema-validated JSON: per-
-criterion scores, weighted total 0–100, one-paragraph reasoning, `red_flags[]`.
-See CLAUDE.md's "scoring_rubric" for the exact semantics (normalize weights —
-they sum to 73 not 100; retry once on invalid JSON then mark needs_review; wrap
-the untrusted posting in delimiters; log every call in full via `llm/client.py`).
+**Next stage is LLM scoring** — for the same **`passed` + `needs_review`** scope
+enrichment used (the scorer owns the needs_review tail — decision #1 below), call
+`qwen3.6:35b-a3b` (zero tools) with the `preferences.yaml` rubric + the offer, and
+store schema-validated JSON: per-criterion scores, weighted total 0–100,
+one-paragraph reasoning, `red_flags[]`. See CLAUDE.md's "scoring_rubric" for the
+exact semantics (normalize weights — they sum to 73 not 100; retry once on invalid
+JSON then mark needs_review; wrap the untrusted posting in delimiters; log every
+call in full via `llm/client.py`). Mirror the established stage pattern
+(`filter_stage.py` / `enrich_commute.py`): idempotent by DB state, `--dry-run` /
+`--limit` / `--rescore`, fail-soft per row, additive columns via `_ADDED_COLUMNS`.
 
 Two decisions from the filter/enrichment work that the scorer must honor:
 
@@ -113,10 +118,18 @@ Two decisions from the filter/enrichment work that the scorer must honor:
    over `commute_minutes × 2 × onsite_days`), NOT by the LLM** — so a better
    address or a changed threshold rescoring is pure math, no LLM call. The LLM
    still infers `onsite_days` from the posting and scores the qualitative
-   criteria. Fully-remote offers already carry `commute_minutes = 0`. Offers with
-   a NULL commute (routing failed / address unresolved) should be scored with the
-   commute criterion flagged, not zeroed. Note `address_confidence='low'` /
-   `address_source='approximate'` marks an estimated commute for review.
+   criteria.
+
+   The commute value a scoring run will find, by `address_source`:
+   - `remote` → `commute_minutes = 0` (max score on the criterion).
+   - `posting`/`wttj`/`france_travail`/`linkedin_email` → a real routed number
+     (`address_confidence` high/medium). `approximate` (out-of-IDF centroid,
+     confidence `low`) is a *usable but estimated* number — score it, flag it.
+   - `needs_address` (bare "Paris", too vague) and NULL commute (routing failed /
+     `unresolved`) → **no usable commute.** Score `weekly_commute_fit` with the
+     criterion **flagged / assumption-noted, never zeroed** (a NULL is "unknown",
+     not "0 minutes"). These are the same rows the Phase 3 address agent will
+     later sharpen, after which `--rescore` recomputes the Python curve for free.
 
 Contract note for the scorer's inputs: an offer may carry a `filter_reasons`
 entry "contract type not stated; assumed CDI" (from `assume_cdi_when_unstated`).
