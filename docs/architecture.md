@@ -25,8 +25,8 @@ framework in v1 — the loop is readable on purpose.
 | Hard filters | ✅ Phase 2 | `pipeline/filters.py`, `pipeline/salary.py`, `pipeline/filter_stage.py` |
 | Enrich (LinkedIn descriptions) | ✅ Phase 2 | `adapters/linkedin_guest.py`, `pipeline/enrich_linkedin.py` |
 | Enrich (address + commute) | ✅ Phase 2 | `enrich/{geocode,address,routing}.py`, `pipeline/enrich_commute.py` — see `docs/enrichment.md` |
-| LLM scoring | ⏳ Phase 2 (next) | — |
-| Address-research agent | ⏳ Phase 3 | — |
+| LLM scoring | ✅ Phase 2 | `pipeline/{scoring,commute_score,score_stage}.py` — see `docs/scoring.md` |
+| Address-research agent | ⏳ Phase 3 (next) | — |
 | Cover-letter agent | ⏳ Phase 3 | — |
 | Digest / scheduling / ops | ⏳ Phase 4 | — |
 
@@ -50,6 +50,9 @@ src/jobscout/
   enrich/address.py    deterministic office-address resolution chain
   enrich/routing.py    Google Routes wrapper + three-strategy commute planner
   pipeline/enrich_commute.py  address+commute enrichment orchestration
+  pipeline/scoring.py       pure scoring: prompt, JSON validation, weighted total
+  pipeline/commute_score.py the Python-owned weekly_commute_fit curve
+  pipeline/score_stage.py   LLM-scoring orchestration (retry-once, fail-soft)
   cli.py             `jobscout` entry point
   llm/client.py      thin Ollama wrapper with full-interaction logging
 ```
@@ -60,7 +63,9 @@ SQLite at `data/jobs.db` is the single source of truth. The `jobs` table holds
 the record fields plus bookkeeping (`first_seen_at`, `last_seen_at`,
 normalized dedupe keys, `dup_group`, `status`) and the Phase 2 hard-filter
 verdict (`filter_status` = passed|needs_review|rejected, `filter_reasons` JSON,
-`filtered_at`); a `runs` table is the audit ledger. Schema is created
+`filtered_at`), the address+commute enrichment columns, and the LLM-scoring
+verdict (`score_total`, `score_status`, `score_json`, `scored_at`); a `runs`
+table is the audit ledger. Schema is created
 idempotently on connect, and newer columns are backfilled on an existing DB via
 an `ALTER TABLE` guard (`_migrate_add_columns`), so a Phase 1 DB upgrades in
 place. Markdown outputs (`output/digests/`, `output/letters/`) arrive later.
@@ -75,31 +80,39 @@ place. Markdown outputs (`output/digests/`, `output/letters/`) arrive later.
 - **Read-only IMAP** for LinkedIn; **home address never in prompts/logs**
   (Phase 2 concern, but the rule is in force).
 
-## Current state & next: LLM scoring
+## Current state & next: Phase 3 agents
 
-Done in Phase 2 so far: **hard filters** (`pipeline/filters.py` + `salary.py` +
-`filter_stage.py`, CLI `jobscout filter`), **LinkedIn description enrichment**
-(`adapters/linkedin_guest.py` + `pipeline/enrich_linkedin.py`, CLI
-`jobscout enrich-linkedin`), and **address + commute enrichment**
+**Phase 2 is complete.** Done: **hard filters** (`pipeline/filters.py` +
+`salary.py` + `filter_stage.py`, CLI `jobscout filter`), **LinkedIn description
+enrichment** (`adapters/linkedin_guest.py` + `pipeline/enrich_linkedin.py`, CLI
+`jobscout enrich-linkedin`), **address + commute enrichment**
 (`enrich/{geocode,address,routing}.py` + `pipeline/enrich_commute.py`, CLI
-`jobscout enrich-commute` — full detail in `docs/enrichment.md`). On the real
-144-offer DB the filter stage yields ~72 passed / ~33 needs_review / ~39
-rejected; commute enrichment ran on the 105 passed+needs_review, of which a live
-run enriched ~72 (18 remote → commute 0), flagged 3 bare-Paris as `needs_address`,
+`jobscout enrich-commute` — full detail in `docs/enrichment.md`), and **LLM
+scoring** (`pipeline/{scoring,commute_score,score_stage}.py`, CLI `jobscout
+score` — full detail in `docs/scoring.md`). **Next up is Phase 3:** the
+address-research agent (warm-up) then the cover-letter agent.
+
+The two decisions below were made during the filter/enrichment work and are now
+honored by the shipped scorer — kept here as the decision record.
+
+On the real 144-offer DB the filter stage yields ~72 passed / ~33 needs_review /
+~39 rejected; commute enrichment ran on the 105 passed+needs_review, of which a
+live run enriched ~72 (18 remote → commute 0), flagged 3 bare-Paris as `needs_address`,
 and left ~30 retryable (unresolved LinkedIn locations / uncgeocodable cities).
 
-**Next stage is LLM scoring** — for the same **`passed` + `needs_review`** scope
-enrichment used (the scorer owns the needs_review tail — decision #1 below), call
-`qwen3.6:35b-a3b` (zero tools) with the `preferences.yaml` rubric + the offer, and
-store schema-validated JSON: per-criterion scores, weighted total 0–100,
-one-paragraph reasoning, `red_flags[]`. See CLAUDE.md's "scoring_rubric" for the
-exact semantics (normalize weights — they sum to 73 not 100; retry once on invalid
-JSON then mark needs_review; wrap the untrusted posting in delimiters; log every
-call in full via `llm/client.py`). Mirror the established stage pattern
-(`filter_stage.py` / `enrich_commute.py`): idempotent by DB state, `--dry-run` /
-`--limit` / `--rescore`, fail-soft per row, additive columns via `_ADDED_COLUMNS`.
+**LLM scoring (shipped)** — for the same **`passed` + `needs_review`** scope
+enrichment used (the scorer owns the needs_review tail — decision #1 below),
+`jobscout score` calls `qwen3.6:35b-a3b` (zero tools) with the `preferences.yaml`
+rubric + the offer and stores schema-validated JSON: per-criterion scores, a
+weighted total 0–100, one-paragraph reasoning, `red_flags[]`. Weights are
+normalized (they sum to **75**, not 100); the stage retries once on invalid JSON
+then marks needs_review; the untrusted posting is delimiter-wrapped; every call
+is logged via `llm/client.py`. It mirrors the established stage pattern
+(idempotent by `scored_at`, `--dry-run` / `--limit` / `--rescore`, fail-soft per
+row, additive columns). Full as-built detail — including the owner-calibrated
+commute curve — is in **`docs/scoring.md`**.
 
-Two decisions from the filter/enrichment work that the scorer must honor:
+The two decisions from the filter/enrichment work the scorer honors:
 
 1. **The scorer owns remote-policy inference for the silent tail.** The
    deterministic `classify_remote_policy` reads location + description prose and
@@ -138,5 +151,7 @@ That's an *assumption*, not a stated fact — surface it, don't treat as certain
 ## Deeper references
 
 - **Ingestion detail + API quirks:** `docs/ingest.md`
+- **Address + commute enrichment:** `docs/enrichment.md`
+- **LLM scoring + the commute curve:** `docs/scoring.md`
 - **Manual test plan:** `docs/phase-1-manual-test-plan.md`
 - **Model choice (bake-off):** `scripts/bakeoff/README.md`

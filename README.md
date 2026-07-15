@@ -14,8 +14,8 @@ rationale and phase plan.
 
 - ✅ **Phase 0** — setup + model bake-off (`qwen3.6:35b-a3b` chosen; see `scripts/bakeoff/README.md`).
 - ✅ **Phase 1** — ingestion & state: three source adapters, SQLite storage, dedupe, idempotent runs.
-- 🔨 **Phase 2** (in progress) — hard filters ✅, LinkedIn description enrichment ✅, address + commute enrichment ✅ (Google Routes, three commute strategies — see `docs/enrichment.md`). **LLM scoring** is the remaining piece.
-- ⏳ **Phase 3** — the two agents (address research, then cover-letter drafting).
+- ✅ **Phase 2** — hard filters, LinkedIn description enrichment, address + commute enrichment (Google Routes, three commute strategies — see `docs/enrichment.md`), and LLM scoring (`qwen3.6:35b-a3b`, zero tools; the `weekly_commute_fit` sub-score is an owner-calibrated Python curve — see `docs/scoring.md`).
+- ⏳ **Phase 3** (next) — the two agents (address research, then cover-letter drafting).
 
 See `docs/architecture.md` for what exists now and the current stage-by-stage status.
 
@@ -103,8 +103,20 @@ uv run jobscout enrich-commute --re-enrich  # redo all (after editing home/commu
 Bare "Paris" (too vague to route) is flagged for a later, more precise pass.
 See `docs/enrichment.md` for the commute model and tunable bike bounds.
 
-**5. LLM scoring** — *not yet built* (the remaining Phase 2 piece). Will score
-each surviving offer against the `preferences.yaml` rubric via local Ollama.
+**5. LLM scoring** — score each surviving (`passed`/`needs_review`) offer against
+the `preferences.yaml` rubric via local Ollama.
+
+```
+uv run jobscout score                 # score offers not yet scored
+uv run jobscout score --dry-run --limit 2   # call the model, write nothing
+uv run jobscout score --rescore       # redo all (after editing the rubric / a resolved address)
+```
+
+The LLM (`qwen3.6:35b-a3b`, zero tools) scores the qualitative criteria and infers
+`onsite_days`; the `weekly_commute_fit` sub-score is a deterministic,
+owner-calibrated Python curve over `commute_minutes × 2 × onsite_days`, blended
+into a normalized 0–100 total. Unknown commutes are flagged, never zeroed. See
+`docs/scoring.md`.
 
 ## Tests
 

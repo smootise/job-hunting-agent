@@ -90,6 +90,10 @@ CREATE TABLE IF NOT EXISTS jobs (
     commute_mode       TEXT,
     commute_strategies TEXT,
     enriched_at        TEXT,
+    score_total        REAL,
+    score_status       TEXT,
+    score_json         TEXT,
+    scored_at          TEXT,
     first_seen_at      TEXT    NOT NULL,
     last_seen_at       TEXT    NOT NULL,
     UNIQUE (source, external_id)
@@ -143,6 +147,11 @@ _ADDED_COLUMNS: dict[str, str] = {
     "commute_mode": "TEXT",
     "commute_strategies": "TEXT",  # JSON: all three strategies + per-leg detail.
     "enriched_at": "TEXT",
+    # Phase 2 LLM scoring.
+    "score_total": "REAL",         # headline weighted 0-100 (for sorting the digest).
+    "score_status": "TEXT",        # 'scored' | 'needs_review' (invalid JSON twice).
+    "score_json": "TEXT",          # full per-criterion breakdown + reasoning + red_flags.
+    "scored_at": "TEXT",           # idempotency stamp; NULL == not yet scored.
 }
 
 
@@ -478,4 +487,60 @@ def record_enrichment(
             commute_minutes, commute_mode, commute_strategies_json,
             _utcnow(), job_id,
         ),
+    )
+
+
+# --------------------------------------------------------------------------
+# Phase 2 LLM scoring
+# --------------------------------------------------------------------------
+
+
+def select_jobs_to_score(
+    conn: sqlite3.Connection, *, limit: int | None = None, rescore: bool = False
+) -> list[sqlite3.Row]:
+    """Return offers awaiting an LLM score (or all scoreable, when rescoring).
+
+    Default: rows that passed the hard filters (``filter_status`` in
+    ``passed``/``needs_review`` — the scorer judges the needs_review tail too)
+    and haven't been scored yet (``scored_at IS NULL``). Same idempotency shape
+    as ``select_jobs_to_enrich``: a re-run only picks up newly-passed offers.
+    Crucially this does NOT require ``enriched_at`` — scoring is independent of
+    enrichment; a row with a NULL commute is scored with the commute criterion
+    flagged unknown, and a later ``--rescore`` folds the commute in once an
+    address resolves. ``rescore=True`` selects every scoreable row so a
+    preferences.yaml rubric change (or a fresh commute) can be re-applied. Rows
+    carry every column, so ``JobRecord.from_row`` consumes them directly.
+    """
+    sql = "SELECT * FROM jobs WHERE filter_status IN ('passed', 'needs_review')"
+    if not rescore:
+        sql += " AND scored_at IS NULL"
+    sql += " ORDER BY id"
+    if limit is not None:
+        sql += " LIMIT ?"
+        return conn.execute(sql, (limit,)).fetchall()
+    return conn.execute(sql).fetchall()
+
+
+def record_score(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    score_total: float | None,
+    score_status: str,
+    score_json: str | None,
+) -> None:
+    """Persist one offer's LLM score.
+
+    A plain UPDATE stamping ``scored_at`` so the row drops out of
+    ``select_jobs_to_score`` next run (idempotency) and ``--rescore`` overwrites
+    cleanly. ``score_total`` is the headline weighted 0-100 (NULL when the row
+    is ``needs_review`` because the model never produced valid JSON);
+    ``score_json`` is the full breakdown for the digest/review. The caller
+    commits (one commit per batch). No home/commute origin is ever stored here —
+    ``score_json`` carries commute *minutes*-derived sub-scores only, never a
+    location."""
+    conn.execute(
+        "UPDATE jobs SET score_total = ?, score_status = ?, score_json = ?, "
+        "scored_at = ? WHERE id = ?",
+        (score_total, score_status, score_json, _utcnow(), job_id),
     )

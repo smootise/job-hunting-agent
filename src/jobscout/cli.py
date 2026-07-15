@@ -14,7 +14,13 @@ from __future__ import annotations
 import argparse
 import logging
 
-from jobscout.pipeline import enrich_commute, enrich_linkedin, filter_stage, ingest
+from jobscout.pipeline import (
+    enrich_commute,
+    enrich_linkedin,
+    filter_stage,
+    ingest,
+    score_stage,
+)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -120,6 +126,36 @@ def main(argv: list[str] | None = None) -> None:
         help="Resolve and route, report counts, write nothing.",
     )
 
+    score_parser = subparsers.add_parser(
+        "score",
+        help="Score passed/needs_review offers against the preferences.yaml "
+        "rubric with the local LLM (zero tools); blends the Python commute "
+        "sub-score into a weighted 0-100 total.",
+    )
+    score_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Max offers to score this run (default: all pending).",
+    )
+    score_parser.add_argument(
+        "--model",
+        default=score_stage.DEFAULT_MODEL,
+        help=f"Ollama model to score with (default: {score_stage.DEFAULT_MODEL}).",
+    )
+    score_parser.add_argument(
+        "--rescore",
+        action="store_true",
+        help="Re-score every scoreable offer, not just un-scored ones "
+        "(use after editing the rubric or once an address resolves).",
+    )
+    score_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Call the model and report totals, but write no scores "
+        "(the full LLM-call logs are still written).",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "ingest":
@@ -130,6 +166,8 @@ def main(argv: list[str] | None = None) -> None:
         _run_enrich_linkedin(args)
     elif args.command == "enrich-commute":
         _run_enrich_commute(args)
+    elif args.command == "score":
+        _run_score(args)
     else:
         parser.print_help()
 
@@ -242,6 +280,30 @@ def _print_enrich_commute_summary(summary: enrich_commute.EnrichCommuteSummary) 
     if summary.considered == 0 and not summary.re_enrich:
         print("  (nothing to enrich — all passed/needs_review offers already enriched; "
               "use --re-enrich to redo)")
+
+
+def _run_score(args: argparse.Namespace) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    summary = score_stage.run_score(
+        model=args.model,
+        limit=args.limit,
+        rescore=args.rescore,
+        dry_run=args.dry_run,
+    )
+    _print_score_summary(summary)
+
+
+def _print_score_summary(summary: score_stage.ScoreSummary) -> None:
+    """Render the scoring tally."""
+    mode = " (dry-run - nothing written)" if summary.dry_run else ""
+    scope = " [rescore: all scoreable]" if summary.rescore else ""
+    print(f"jobscout score{mode}{scope}")
+    print(f"  considered:   {summary.considered}  (passed/needs_review, not yet scored)")
+    print(f"  scored:       {summary.scored}  ({summary.commute_unknown} with commute unknown)")
+    print(f"  needs_review: {summary.needs_review}  (invalid JSON x2 or model error)")
+    if summary.considered == 0 and not summary.rescore:
+        print("  (nothing to score — all passed/needs_review offers already scored; "
+              "use --rescore to redo)")
 
 
 if __name__ == "__main__":
