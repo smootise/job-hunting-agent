@@ -122,6 +122,50 @@ def test_brief_survives_when_wttj_403s(db_path):
     assert "AI workflow automation" in row["company_brief"]
 
 
+def test_fetched_page_reaches_grounding_even_if_not_cited(db_path):
+    # Regression for the deeper Doctolib bug: grounding must see the page the agent
+    # actually FETCHED, not re-match the draft's cited URLs (the model cited URLs it
+    # never fetched, leaving grounding with a bare page title). Here the agent
+    # fetches acme.fr (body: PAGE_MARKER) but the draft cites a *different* URL; the
+    # fetched body must still appear in the grounding prompt.
+    _seed(db_path, _wttj_job(description="short"))
+    PAGE_MARKER = "UNIQUEBODYTOKEN ACME builds AI workflow automation for enterprises"
+
+    def fetch_handler(request):
+        if "welcometothejungle.com" in str(request.url):
+            return httpx.Response(403, text="Forbidden")
+        return httpx.Response(200, text=f"<html><body>{PAGE_MARKER}</body></html>",
+                              headers={"content-type": "text/html"})
+
+    # Draft: agent fetches acme.fr, then cites a URL it never fetched.
+    draft = ('{"tool": "fetch_page", "args": {"url": "https://acme.fr/about"}}',
+             '{"final": {"summary": "AI workflow automation", "product": null, "culture": null, '
+             '"size_signal": null, "ai_usage": null, "sources": ["https://never-fetched.example"], "confidence": "medium"}}')
+    grounded = ('{"summary": "AI workflow automation", "product": null, "culture": null, '
+                '"size_signal": null, "ai_usage": null, "sources": [], "confidence": "low"}')
+
+    captured = {}
+
+    def spy_gen(scripted):
+        base = _gen(scripted)
+
+        def generate(model, prompt, *, system=None, log_dir=None):
+            r = base(model, prompt, system=system, log_dir=log_dir)
+            if "DRAFT BRIEF" in prompt:      # the grounding call
+                captured["grounding_prompt"] = prompt
+            return r
+
+        return generate
+
+    research_company.run_research_company(
+        db_path=db_path, _generate=spy_gen([*draft, grounded]),
+        _search_client=_search_client(), _fetch_client=httpx.Client(transport=httpx.MockTransport(fetch_handler)))
+
+    assert "grounding_prompt" in captured
+    # The FETCHED page body must be in the grounding evidence, despite not being cited.
+    assert PAGE_MARKER in captured["grounding_prompt"]
+
+
 def test_research_company_idempotent(db_path):
     _seed(db_path, _wttj_job())
     kw = dict(db_path=db_path, _search_client=_search_client(), _fetch_client=_fetch_client())

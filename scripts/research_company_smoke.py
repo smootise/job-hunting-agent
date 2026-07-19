@@ -27,6 +27,7 @@ import httpx  # noqa: E402
 from jobscout import config  # noqa: E402
 from jobscout.agents import company_agent, tools  # noqa: E402
 from jobscout.models import JobRecord  # noqa: E402
+from jobscout.pipeline import research_company as rc  # noqa: E402
 
 DEFAULT_COMPANY = "Doctolib"
 
@@ -56,13 +57,11 @@ def main() -> None:
     fetch_client = httpx.Client(timeout=tools.FETCH_TIMEOUT, follow_redirects=True)
     cache = tools.FetchCache()
 
-    def web_search(query: str):
-        return tools.web_search(query, searxng_url=searxng, client=search_client)
-
-    def fetch_page(url: str):
-        return tools.fetch_page(url, policy=tools.POLICY_SOFT, client=fetch_client, cache=cache)
-
-    tools_map = {"web_search": web_search, "fetch_page": fetch_page}
+    # Exercise the REAL stage helpers (not a hand-rolled copy) so this smoke test
+    # can't drift from what `jobscout research-company` actually does — that drift
+    # is exactly what hid a grounding bug before.
+    evidence = rc._Evidence()
+    tools_map = rc._build_tools(searxng, search_client, fetch_client, cache, evidence)
 
     def _fetch(url, *, policy, cache):
         return tools.fetch_page(url, policy=policy, client=fetch_client, cache=cache)
@@ -79,11 +78,10 @@ def main() -> None:
     print(f"  draft: {json.dumps(draft, ensure_ascii=False)[:300]}\n")
 
     print("Step 4: grounding-verification pass...")
-    sources = [t for t in (wttj_text,) if t]
-    for url in (draft.get("sources") or []):
-        c = cache.get(url) if isinstance(url, str) else None
-        if c:
-            sources.append(c)
+    sources = rc._collect_sources(record, wttj_text, evidence)
+    print(f"  grounding against {len(sources)} source text(s) "
+          f"({len(evidence.pages)} fetched pages, {len(evidence.snippets)} snippets, "
+          f"+ description/WTTJ)")
     brief = company_agent.verify_brief(draft, sources)
 
     print(f"\n  grounded brief:\n{json.dumps(brief.as_json_dict(), ensure_ascii=False, indent=2)}")
