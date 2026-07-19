@@ -107,6 +107,38 @@ def test_verify_empty_after_grounding_needs_review():
     assert brief.needs_review and brief.is_empty
 
 
+def test_verify_no_evidence_needs_review_without_model_call():
+    # The Doctolib-smoke failure mode: a good draft but ZERO source texts. That's
+    # the honest "can't verify anything" case → needs_review, and we must not even
+    # call the model (nothing to ground against).
+    def must_not_call(model, prompt, *, system=None, log_dir=None):
+        raise AssertionError("must not call the model with no evidence")
+
+    brief = ca.verify_brief({"summary": "x"}, [], generate=must_not_call)
+    assert brief.needs_review and brief.is_empty
+
+
+def test_verify_survives_on_description_only_no_wttj():
+    # The fix: a missing WTTJ profile must NOT sink the brief when we still have
+    # the job description as evidence. Here the only source is the description and
+    # the grounding model keeps the supported claim.
+    draft = {"summary": "AI workflow automation", "product": None, "culture": None,
+             "size_signal": None, "ai_usage": None, "sources": []}
+    grounded = ('{"summary": "AI workflow automation", "product": null, "culture": null, '
+                '"size_signal": null, "ai_usage": null, "sources": [], "confidence": "low"}')
+    brief = ca.verify_brief(draft, ["The role is at an AI workflow automation company."], generate=_gen([grounded]))
+    assert not brief.needs_review
+    assert brief.summary == "AI workflow automation"
+
+
+def test_verify_blank_only_sources_treated_as_no_evidence():
+    # Whitespace-only "sources" are not evidence → needs_review, no model call.
+    def must_not_call(model, prompt, *, system=None, log_dir=None):
+        raise AssertionError("blank sources are not evidence")
+
+    assert ca.verify_brief({"summary": "x"}, ["", "   "], generate=must_not_call).needs_review
+
+
 def test_verify_none_draft_needs_review():
     assert ca.verify_brief(None, [], generate=_gen(["x"])).needs_review
 

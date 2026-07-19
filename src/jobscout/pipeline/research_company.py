@@ -85,15 +85,15 @@ def run_research_company(
 
     try:
         searxng = config.searxng_url(env)  # fail loud if unset.
-        cache = tools.FetchCache()
-        tools_map = _build_tools(searxng, search_client, fetch_client, cache)
+        cache = tools.FetchCache()  # shared across rows: same company page fetched once.
 
         rows = db.select_jobs_to_research_company(conn, limit=limit, redo=redo)
         summary.considered = len(rows)
         for row in rows:
             _research_row(
-                conn, row, tools_map=tools_map, model=model, generate=generate,
-                fetch_client=fetch_client, cache=cache, dry_run=dry_run, summary=summary,
+                conn, row, searxng=searxng, search_client=search_client,
+                fetch_client=fetch_client, cache=cache, model=model,
+                generate=generate, dry_run=dry_run, summary=summary,
             )
         if not dry_run:
             conn.commit()
@@ -115,10 +115,22 @@ def run_research_company(
     return summary
 
 
-def _build_tools(searxng: str, search_client, fetch_client, cache) -> dict:
-    """Bind the two whitelisted tools with clients + the shared fetch cache."""
+def _build_tools(searxng, search_client, fetch_client, cache, snippets) -> dict:
+    """Bind the whitelisted tools for one row, capturing search snippets.
+
+    The ``web_search`` wrapper records every result's snippet into ``snippets``
+    so the grounding pass can use them as evidence even when the agent never
+    fetches a page (the failure mode the Doctolib smoke run exposed: it searched
+    three times, fetched nothing, and grounding then had no text to check). The
+    fetch cache is shared per run; snippets are collected fresh per row.
+    """
     def web_search(query: str) -> list[dict]:
-        return tools.web_search(query, searxng_url=searxng, client=search_client)
+        results = tools.web_search(query, searxng_url=searxng, client=search_client)
+        for r in results:
+            snippet = (r.get("snippet") or "").strip()
+            if snippet:
+                snippets.append(snippet)
+        return results
 
     def fetch_page(url: str) -> str:
         return tools.fetch_page(
@@ -129,11 +141,13 @@ def _build_tools(searxng: str, search_client, fetch_client, cache) -> dict:
 
 
 def _research_row(
-    conn, row, *, tools_map, model, generate, fetch_client, cache, dry_run, summary,
+    conn, row, *, searxng, search_client, fetch_client, cache, model, generate, dry_run, summary,
 ) -> None:
     """Research one company, fail-soft. Draft → ground → persist."""
     try:
         record = JobRecord.from_row(row)
+        snippets: list[str] = []
+        tools_map = _build_tools(searxng, search_client, fetch_client, cache, snippets)
 
         # Step 1 — deterministic WTTJ profile (highest signal, no LLM loop).
         # ``fetch_wttj_profile`` calls ``fetch(url, policy=…, cache=…)``; bind the
@@ -149,8 +163,11 @@ def _research_row(
             record, tools_map=tools_map, wttj_text=wttj_text, model=model, generate=generate,
         )
 
-        # Step 4 — ground the draft against the sources we captured.
-        source_texts = _collect_sources(wttj_text, draft, cache)
+        # Step 4 — ground the draft against ALL evidence we have: the job
+        # description (we almost always have it), the WTTJ profile (when the fetch
+        # succeeded), fetched pages, and search snippets. A missing WTTJ profile
+        # never sinks the brief on its own — only a total absence of evidence does.
+        source_texts = _collect_sources(record, wttj_text, draft, cache, snippets)
         brief = company_agent.verify_brief(
             draft, source_texts, model=model, generate=generate,
         )
@@ -178,19 +195,32 @@ def _research_row(
             db.record_company_brief(conn, row["id"], company_brief_json=None)
 
 
-def _collect_sources(wttj_text, draft, cache) -> list[str]:
-    """Gather the source texts for the grounding pass: WTTJ profile + fetched pages.
+def _collect_sources(record, wttj_text, draft, cache, snippets) -> list[str]:
+    """Assemble the full evidence set the grounding pass checks the draft against.
 
-    The grounding step checks the draft's claims against text we actually
-    retrieved. We include the deterministic WTTJ profile plus any page the agent
-    fetched during drafting (which the shared per-run cache captured), so the
-    fact-checker sees the same evidence the drafter did.
+    Four kinds of evidence, most-trusted first — the point (owner's decision) is
+    that the brief grounds against *whatever we have*, so a failed WTTJ fetch
+    never on its own leaves the fact-checker with nothing:
+
+      1. **The job description** — untrusted posting text (fenced by the grounding
+         prompt like every other source), but we almost always have it. This is
+         the evidence that guarantees a missing WTTJ profile doesn't sink the brief.
+      2. **The WTTJ profile** — when the deterministic fetch succeeded.
+      3. **Fetched pages** the agent read (from the shared cache), preferring the
+         URLs the draft cited to keep the prompt bounded.
+      4. **Search snippets** the agent's ``web_search`` calls returned — the
+         fallback for a run that searched but never fetched a page.
+
+    ``verify_brief`` returns ``needs_review`` only when this whole set is empty.
     """
     texts: list[str] = []
+    description = (record.description or "").strip()
+    if description:
+        texts.append(description)
     if wttj_text:
         texts.append(wttj_text)
-    # Any page the agent fetched this run is in the cache; include the ones the
-    # draft cited as sources (keeps the grounding prompt focused + bounded).
+    # Pages the agent fetched this run live in the cache; prefer the draft's cited
+    # URLs (focused + bounded), fall back to nothing rather than dumping the cache.
     cited = (draft or {}).get("sources") or []
     if isinstance(cited, list):
         for url in cited:
@@ -198,4 +228,8 @@ def _collect_sources(wttj_text, draft, cache) -> list[str]:
                 cached = cache.get(url)
                 if cached and cached not in texts:
                     texts.append(cached)
+    # Search snippets: short, but real evidence when no page was fetched.
+    for snippet in snippets:
+        if snippet and snippet not in texts:
+            texts.append(snippet)
     return texts

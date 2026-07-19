@@ -59,6 +59,19 @@ SOFT_ALLOWLIST: tuple[str, ...] = (
 POLICY_SOFT = "soft_allowlist"
 POLICY_HARD = "hard_whitelist"
 
+# A plain browser User-Agent. Many public sites (Welcome to the Jungle among them)
+# return 403 to a non-browser UA, which would silently kill the deterministic
+# company-profile fetch. This is a read-only GET of a public page — within the
+# brief's "public, low-volume" spirit — and reuses the same UA the LinkedIn guest
+# enrichment already sends (see pipeline/enrich_linkedin.py).
+_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+    ),
+    "Accept-Language": "fr,en;q=0.8",
+}
+
 
 @dataclass
 class FetchCache:
@@ -209,7 +222,7 @@ def fetch_page(
     owns_client = client is None
     client = client or httpx.Client(timeout=timeout, follow_redirects=True)
     try:
-        resp = client.get(url, headers={"User-Agent": "jobscout-research/0.1"})
+        resp = client.get(url, headers=_BROWSER_HEADERS)
         resp.raise_for_status()
         content_type = resp.headers.get("content-type", "")
         if "html" not in content_type and "text" not in content_type:

@@ -143,6 +143,9 @@ How to work:
 - Use `web_search` and `fetch_page` to fill gaps: what the company does, its \
 main product, its culture/values, its size (employees/stage), and whether/how it \
 uses AI/ML. Prefer the company's own website.
+- `web_search` gives you snippets; **`fetch_page` at least one promising result** \
+to read the real page before you finalize — a claim you can point to a fetched \
+page for is far stronger than one from a snippet.
 - Base every statement on something you actually read. Do NOT invent facts. If \
 you cannot determine a field, set it to null — a null field is fine.
 
@@ -233,25 +236,39 @@ def verify_brief(
     generate: Callable | None = None,
     log_dir=None,
 ) -> CompanyBrief:
-    """Ground the draft against the fetched sources; strip unsupported claims.
+    """Ground the draft against ALL available evidence; strip unsupported claims.
 
-    Runs one zero-tool model call (the grounding pass). Parses its JSON into a
-    ``CompanyBrief``. If the draft is missing, the verify call fails to parse, or
-    nothing substantive survives, returns a brief flagged ``needs_review`` (the
-    caller excludes it from scoring but still stamps the row). Fail-soft: any
-    error yields a ``needs_review`` brief, never a raise.
+    ``source_texts`` is the full evidence set the caller could assemble — the job
+    description, the WTTJ profile (if the fetch succeeded), and any web page /
+    search snippet the agent gathered. The grounding model keeps only claims those
+    sources support and nulls the rest (strip-unsupported-keep-grounded), so a
+    brief survives on whatever evidence exists — a failed WTTJ fetch, by itself,
+    never sinks it.
+
+    ``needs_review`` means one of three genuinely-empty outcomes, never "a source
+    was missing":
+      * the draft is absent/malformed;
+      * **we had no evidence at all** (no description, no WTTJ, no web) — there's
+        nothing to ground against, so we don't even call the model;
+      * grounding ran but nothing substantive survived.
+    Fail-soft: any error yields a ``needs_review`` brief, never a raise.
     """
     from jobscout.llm import client as llm_client
 
     if not isinstance(draft, dict):
         return CompanyBrief(None, None, None, None, None, needs_review=True)
 
+    kept_sources = [t for t in source_texts if t and t.strip()]
+    if not kept_sources:
+        # No evidence at all — the honest "can't verify anything" case. Don't
+        # burn a model call grounding against nothing.
+        logger.info("no evidence to ground the company brief — needs_review")
+        return CompanyBrief(None, None, None, None, None, needs_review=True)
+
     generate = generate or llm_client.generate
     log_dir = log_dir or llm_client.DEFAULT_LOG_DIR
 
-    sources_block = "\n\n".join(
-        f"<<<SOURCE\n{t[:4000]}\nSOURCE>>>" for t in source_texts if t
-    ) or "(no source texts were captured)"
+    sources_block = "\n\n".join(f"<<<SOURCE\n{t[:4000]}\nSOURCE>>>" for t in kept_sources)
     user = (
         "DRAFT BRIEF (JSON):\n"
         + json.dumps(_slim_draft(draft), ensure_ascii=False)

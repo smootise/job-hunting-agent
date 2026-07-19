@@ -69,6 +69,21 @@ def test_fetch_page_extracts_text_drops_scripts():
     assert "evil()" not in txt  # script stripped
 
 
+def test_fetch_page_sends_browser_user_agent():
+    # Many public sites (Welcome to the Jungle) 403 a non-browser UA, which would
+    # silently kill the deterministic company-profile fetch. Assert we send a
+    # browser UA so that stays working.
+    seen = {}
+
+    def handler(request):
+        seen["ua"] = request.headers.get("user-agent", "")
+        return httpx.Response(200, text=_HTML, headers={"content-type": "text/html"})
+
+    tools.fetch_page("https://acme.fr/about", client=_client(handler))
+    assert "Mozilla/5.0" in seen["ua"]
+    assert "jobscout" not in seen["ua"].lower()  # not the old non-browser UA
+
+
 def test_fetch_page_cache_avoids_second_request():
     cache = tools.FetchCache()
     tools.fetch_page("https://acme.fr/about", client=_html_client(), cache=cache)

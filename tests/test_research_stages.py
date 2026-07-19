@@ -93,6 +93,35 @@ def test_research_company_persists_brief(db_path):
     assert "AI workflow automation" in row["company_brief"]
 
 
+def _fetch_client_wttj_403():
+    """Fetch client that 403s the WTTJ company page (the real Doctolib case)."""
+    def handler(request):
+        if "welcometothejungle.com" in str(request.url):
+            return httpx.Response(403, text="Forbidden")
+        return httpx.Response(200, text="<html><body>ACME builds AI workflow automation.</body></html>",
+                              headers={"content-type": "text/html"})
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_brief_survives_when_wttj_403s(db_path):
+    # Regression for the Doctolib smoke run: WTTJ profile 403s, agent searches but
+    # the description + snippets are still evidence, so grounding keeps the brief
+    # instead of nulling everything to needs_review.
+    _seed(db_path, _wttj_job(description="A Product Manager role at an AI workflow automation company, ~200 employees."))
+    # Grounding keeps the summary (supported by the description/snippets).
+    grounded = ('{"summary": "AI workflow automation", "product": null, "culture": null, '
+                '"size_signal": "~200 employees", "ai_usage": null, "sources": [], "confidence": "low"}')
+    s = research_company.run_research_company(
+        db_path=db_path, _generate=_gen([_DRAFT, grounded]),
+        _search_client=_search_client(), _fetch_client=_fetch_client_wttj_403())
+    assert s.briefed == 1 and s.needs_review == 0 and s.from_wttj == 0  # no WTTJ profile, still briefed
+    conn = db.connect(db_path)
+    row = conn.execute("SELECT company_brief FROM jobs").fetchone()
+    conn.close()
+    assert "AI workflow automation" in row["company_brief"]
+
+
 def test_research_company_idempotent(db_path):
     _seed(db_path, _wttj_job())
     kw = dict(db_path=db_path, _search_client=_search_client(), _fetch_client=_fetch_client())
