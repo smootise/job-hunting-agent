@@ -150,7 +150,15 @@ def _enrich_row(
     """Resolve + route one row, fail-soft. Updates ``summary`` and persists."""
     try:
         record = JobRecord.from_row(row)
-        resolved = address_mod.resolve_address(record, client=geo_client)
+
+        # Phase 3: the address-research agent may have already resolved + validated
+        # a real office address for this row (address_source='agent', with
+        # coordinates) — it deliberately left routing to us. Honor that instead of
+        # re-running resolve_address (which only sees JobRecord fields, not the
+        # stored agent coords). Everything downstream (routing, persist) is
+        # identical to a freshly-resolved address.
+        agent_resolved = _agent_resolution(row)
+        resolved = agent_resolved or address_mod.resolve_address(record, client=geo_client)
 
         # Fully-remote → commute 0, no routing.
         if resolved.is_remote:
@@ -214,6 +222,31 @@ def _enrich_row(
         logger.warning(
             "enrich error [%s] %r: %s", row["source"], row["title"], type(exc).__name__
         )
+
+
+def _agent_resolution(row) -> address_mod.ResolvedAddress | None:
+    """Rebuild a ResolvedAddress from an address the Phase 3 agent already stored.
+
+    The address-research agent writes ``address_source='agent'`` + coordinates
+    (via ``db.record_agent_address``) after passing the BAN-geocode + IDF gate,
+    but deliberately leaves routing to this stage. When we see such a row, we
+    reconstruct a ``ResolvedAddress`` from the stored columns so the normal
+    routing path below handles it — no re-geocoding, no duplicated logic. Returns
+    ``None`` for any other row (the caller then runs the deterministic chain).
+    """
+    if row["address_source"] != "agent":
+        return None
+    if row["lat"] is None or row["lon"] is None:
+        return None  # defensive: an 'agent' row without coords shouldn't exist.
+    return address_mod.ResolvedAddress(
+        source="agent",
+        address=row["address"],
+        lat=row["lat"],
+        lon=row["lon"],
+        city=None,
+        confidence=row["address_confidence"] or "medium",
+        in_idf=True,  # the agent's validation gate already confirmed IDF.
+    )
 
 
 def _log_row(row, source: str, minutes: float | None) -> None:

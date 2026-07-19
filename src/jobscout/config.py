@@ -137,6 +137,22 @@ def google_routes_key(env: dict[str, str] | None = None) -> str:
     return key
 
 
+def searxng_url(env: dict[str, str] | None = None) -> str:
+    """The base URL of the self-hosted SearXNG instance, or a clear error.
+
+    Same fail-loud pattern as the other getters: the Phase 3 research agents'
+    ``web_search`` tool needs a reachable SearXNG (the owner runs one on their
+    LAN, e.g. ``http://192.168.1.63:8085``); a run that reaches an agent without
+    it should fail at startup with an actionable message rather than deep inside
+    an HTTP call. This is a LAN URL, not a secret, but it's read from ``.env``
+    for consistency with every other endpoint/credential. The trailing slash is
+    stripped so callers can append ``/search`` uniformly.
+    """
+    env = env if env is not None else load_env()
+    (url,) = _require(env, "SEARXNG_URL")
+    return url.rstrip("/")
+
+
 # --------------------------------------------------------------------------
 # Commute-enrichment preferences (home origin + bike tunables)
 # --------------------------------------------------------------------------

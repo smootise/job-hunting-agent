@@ -7,8 +7,9 @@ rules of engagement, `CLAUDE.md`. This doc is the *what exists now*.
 ## The pipeline
 
 ```
-ingest → normalize → dedupe → hard filters → enrich (address + commute)
-       → LLM scoring → [human threshold] → cover-letter agent → digest
+ingest → normalize → dedupe → hard filters → research (address + company)
+       → enrich (address + commute) → LLM scoring → [human threshold]
+       → cover-letter agent → digest
 ```
 
 The plumbing (ingest, dedupe, filters, enrichment, digest) is deterministic
@@ -26,8 +27,10 @@ framework in v1 — the loop is readable on purpose.
 | Enrich (LinkedIn descriptions) | ✅ Phase 2 | `adapters/linkedin_guest.py`, `pipeline/enrich_linkedin.py` |
 | Enrich (address + commute) | ✅ Phase 2 | `enrich/{geocode,address,routing}.py`, `pipeline/enrich_commute.py` — see `docs/enrichment.md` |
 | LLM scoring | ✅ Phase 2 | `pipeline/{scoring,commute_score,score_stage}.py` — see `docs/scoring.md` |
-| Address-research agent | ⏳ Phase 3 (next) | — |
-| Cover-letter agent | ⏳ Phase 3 | — |
+| Shared agent tool loop | ✅ Phase 3 | `agents/{loop,tools}.py` — see `docs/agents.md` |
+| Address-research agent | ✅ Phase 3 | `agents/address_agent.py`, `pipeline/research_address.py` |
+| Company-research agent | ✅ Phase 3 | `agents/company_agent.py`, `pipeline/research_company.py` |
+| Cover-letter agent | ⏳ Phase 3 (next) | — |
 | Digest / scheduling / ops | ⏳ Phase 4 | — |
 
 ## Package layout
@@ -51,8 +54,15 @@ src/jobscout/
   enrich/routing.py    Google Routes wrapper + three-strategy commute planner
   pipeline/enrich_commute.py  address+commute enrichment orchestration
   pipeline/scoring.py       pure scoring: prompt, JSON validation, weighted total
+                            (+ Phase 3: company brief as advisory context)
   pipeline/commute_score.py the Python-owned weekly_commute_fit curve
   pipeline/score_stage.py   LLM-scoring orchestration (retry-once, fail-soft)
+  agents/loop.py            hand-rolled ReAct tool loop (shared; the Phase 3 lesson)
+  agents/tools.py           whitelisted web_search (SearXNG) + read-only fetch_page
+  agents/address_agent.py   warm-up agent: company+city → validated IDF address
+  agents/company_agent.py   company brief (WTTJ profile → agent → grounding pass)
+  pipeline/research_address.py  address-agent orchestration (tail only, fail-soft)
+  pipeline/research_company.py  company-research orchestration (all offers)
   cli.py             `jobscout` entry point
   llm/client.py      thin Ollama wrapper with full-interaction logging
 ```
@@ -80,17 +90,45 @@ place. Markdown outputs (`output/digests/`, `output/letters/`) arrive later.
 - **Read-only IMAP** for LinkedIn; **home address never in prompts/logs**
   (Phase 2 concern, but the rule is in force).
 
-## Current state & next: Phase 3 agents
+## Current state & next: Phase 3 (letter agent remaining)
 
-**Phase 2 is complete.** Done: **hard filters** (`pipeline/filters.py` +
-`salary.py` + `filter_stage.py`, CLI `jobscout filter`), **LinkedIn description
-enrichment** (`adapters/linkedin_guest.py` + `pipeline/enrich_linkedin.py`, CLI
-`jobscout enrich-linkedin`), **address + commute enrichment**
-(`enrich/{geocode,address,routing}.py` + `pipeline/enrich_commute.py`, CLI
-`jobscout enrich-commute` — full detail in `docs/enrichment.md`), and **LLM
-scoring** (`pipeline/{scoring,commute_score,score_stage}.py`, CLI `jobscout
-score` — full detail in `docs/scoring.md`). **Next up is Phase 3:** the
-address-research agent (warm-up) then the cover-letter agent.
+**Phase 2 is complete**, and the **two Phase 3 research agents have shipped**
+(the cover-letter agent is what remains of Phase 3). Phase 2: **hard filters**
+(`pipeline/filters.py` + `salary.py` + `filter_stage.py`, CLI `jobscout filter`),
+**LinkedIn description enrichment** (`adapters/linkedin_guest.py` +
+`pipeline/enrich_linkedin.py`, CLI `jobscout enrich-linkedin`), **address +
+commute enrichment** (`enrich/{geocode,address,routing}.py` +
+`pipeline/enrich_commute.py`, CLI `jobscout enrich-commute` — full detail in
+`docs/enrichment.md`), and **LLM scoring**
+(`pipeline/{scoring,commute_score,score_stage}.py`, CLI `jobscout score` — full
+detail in `docs/scoring.md`).
+
+**Phase 3 so far — the shared tool loop + two research agents** (full detail in
+`docs/agents.md`): a hand-rolled ReAct loop (`agents/loop.py`) drives two agents
+with two read-only whitelisted tools (`agents/tools.py`: `web_search` via
+self-hosted SearXNG + `fetch_page`). `jobscout research-address` runs the
+**address-research agent** (warm-up) on the unroutable tail
+(`needs_address`/`unresolved`), validates its candidate deterministically (BAN
+geocode + Île-de-France), and stores an `address_source='agent'` address —
+leaving routing to `enrich-commute`. `jobscout research-company` runs the
+**company-research agent** on every passed/needs_review offer: a deterministic
+WTTJ-profile fetch, then agent gap-fill, then a **grounding-verification pass**
+that strips unsupported claims, producing a `company_brief` JSON blob. Both run
+**before** `enrich-commute` and `score` in the pipeline; the brief feeds the
+zero-tool scorer as delimiter-wrapped **advisory context** (never a hard gate).
+
+Two deviations from the brief's original Phase 3 plan, decided with the owner and
+recorded in `docs/agents.md`: (1) the address agent was **widened into two
+agents** — the warm-up address agent *plus* a company-research agent that
+enriches *all* offers (not just missing-address ones) with a grounded company
+brief for the scorer; (2) the deterministic **WTTJ-profile and French-registry**
+resolution steps the brief listed were **not** built as address pre-filters — the
+registry returns an HQ address (a weak fit for the bare-"Paris" worklist), so
+they're deferred as an optional future pre-filter; the WTTJ profile instead feeds
+the *company* brief deterministically.
+
+**Next up:** the cover-letter agent (reuses `agents/loop.py` + `fetch_page` in
+`hard_whitelist` mode + one sandboxed `save_draft`).
 
 The two decisions below were made during the filter/enrichment work and are now
 honored by the shipped scorer — kept here as the decision record.
@@ -153,5 +191,6 @@ That's an *assumption*, not a stated fact — surface it, don't treat as certain
 - **Ingestion detail + API quirks:** `docs/ingest.md`
 - **Address + commute enrichment:** `docs/enrichment.md`
 - **LLM scoring + the commute curve:** `docs/scoring.md`
+- **Phase 3 agents (loop, tools, both agents, SearXNG setup):** `docs/agents.md`
 - **Manual test plan:** `docs/phase-1-manual-test-plan.md`
 - **Model choice (bake-off):** `scripts/bakeoff/README.md`
