@@ -152,6 +152,9 @@ _ADDED_COLUMNS: dict[str, str] = {
     "score_status": "TEXT",        # 'scored' | 'needs_review' (invalid JSON twice).
     "score_json": "TEXT",          # full per-criterion breakdown + reasoning + red_flags.
     "scored_at": "TEXT",           # idempotency stamp; NULL == not yet scored.
+    # Phase 3 company research (advisory context for the scorer + letter agent).
+    "company_brief": "TEXT",       # JSON: {summary, product, culture, size_signal, ai_usage, sources[], confidence}.
+    "company_researched_at": "TEXT",  # idempotency stamp; NULL == not yet researched.
 }
 
 
@@ -543,4 +546,111 @@ def record_score(
         "UPDATE jobs SET score_total = ?, score_status = ?, score_json = ?, "
         "scored_at = ? WHERE id = ?",
         (score_total, score_status, score_json, _utcnow(), job_id),
+    )
+
+
+# --------------------------------------------------------------------------
+# Phase 3 agents — company research + agent-resolved address
+# --------------------------------------------------------------------------
+
+
+def select_jobs_to_research_company(
+    conn: sqlite3.Connection, *, limit: int | None = None, redo: bool = False
+) -> list[sqlite3.Row]:
+    """Return offers awaiting company research (or all, when ``redo``).
+
+    Same idempotency shape as ``select_jobs_to_score``: passed/needs_review rows
+    (the scorer judges the needs_review tail too, so both deserve a brief) that
+    haven't been researched yet (``company_researched_at IS NULL``). Company
+    research runs on *every* such offer (unlike address research, which only
+    touches the unroutable tail). ``redo=True`` selects all so a re-run can
+    refresh briefs. Rows carry every column for ``JobRecord.from_row``.
+    """
+    sql = "SELECT * FROM jobs WHERE filter_status IN ('passed', 'needs_review')"
+    if not redo:
+        sql += " AND company_researched_at IS NULL"
+    sql += " ORDER BY id"
+    if limit is not None:
+        sql += " LIMIT ?"
+        return conn.execute(sql, (limit,)).fetchall()
+    return conn.execute(sql).fetchall()
+
+
+def record_company_brief(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    company_brief_json: str | None,
+) -> None:
+    """Persist one offer's company brief (JSON) and stamp ``company_researched_at``.
+
+    A plain UPDATE stamping the timestamp so the row drops out of
+    ``select_jobs_to_research_company`` next run (idempotency) and ``--redo``
+    overwrites cleanly. ``company_brief_json`` is NULL when research produced
+    nothing usable (the row is still stamped so we don't re-attempt every run;
+    ``--redo`` retries). The brief is advisory context for the scorer — never a
+    hard gate. The caller commits (one commit per batch).
+    """
+    conn.execute(
+        "UPDATE jobs SET company_brief = ?, company_researched_at = ? WHERE id = ?",
+        (company_brief_json, _utcnow(), job_id),
+    )
+
+
+def select_jobs_to_research_address(
+    conn: sqlite3.Connection, *, limit: int | None = None, redo: bool = False
+) -> list[sqlite3.Row]:
+    """Return candidate rows for the address agent (the unroutable tail).
+
+    The agent's true worklist — "is this address too vague to route?" — is
+    decided by ``enrich.address.resolve_address`` at run time, NOT by SQL, so
+    ``resolve_address`` stays the single authority on address quality. This
+    helper just narrows to the plausible candidates cheaply: passed/needs_review
+    rows the agent hasn't already placed (``address_source`` is not ``'agent'``).
+    The stage then calls ``resolve_address`` per row and only invokes the agent
+    when it returns ``needs_address``/``unresolved``. ``redo=True`` also re-offers
+    rows already placed by the agent (so a better search can be re-attempted).
+
+    Deliberately does NOT gate on ``enriched_at``: research runs *before*
+    ``enrich-commute`` in the pipeline (which is the sole router), so at this
+    point the tail carries no enrichment stamp yet.
+    """
+    sql = "SELECT * FROM jobs WHERE filter_status IN ('passed', 'needs_review')"
+    if not redo:
+        sql += " AND (address_source IS NULL OR address_source != 'agent')"
+    sql += " ORDER BY id"
+    if limit is not None:
+        sql += " LIMIT ?"
+        return conn.execute(sql, (limit,)).fetchall()
+    return conn.execute(sql).fetchall()
+
+
+def record_agent_address(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    address: str,
+    lat: float,
+    lon: float,
+    address_confidence: str,
+) -> None:
+    """Persist an address the research agent found and validation confirmed.
+
+    Writes the office address + coordinates with ``address_source='agent'`` and
+    **clears any stale commute + enrichment stamp** (``commute_minutes``,
+    ``commute_mode``, ``commute_strategies``, ``enriched_at`` → NULL). Routing is
+    owned entirely by ``enrich-commute``, which runs after research; nulling the
+    stamp is what makes it re-route this row on its *normal* pass rather than
+    skipping it as already-enriched. This matters when the agent sharpens an
+    address on a row enriched in a PRIOR run from a worse address — otherwise the
+    old (now-wrong) commute would linger and never be recomputed without
+    ``--re-enrich``. The candidate has already passed the deterministic
+    BAN-geocode + IDF validation net in the caller (a wrong address can never
+    hard-reject an offer). The caller commits.
+    """
+    conn.execute(
+        "UPDATE jobs SET address = ?, lat = ?, lon = ?, address_source = 'agent', "
+        "address_confidence = ?, commute_minutes = NULL, commute_mode = NULL, "
+        "commute_strategies = NULL, enriched_at = NULL WHERE id = ?",
+        (address, lat, lon, address_confidence, job_id),
     )

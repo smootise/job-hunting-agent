@@ -15,7 +15,7 @@ rationale and phase plan.
 - ✅ **Phase 0** — setup + model bake-off (`qwen3.6:35b-a3b` chosen; see `scripts/bakeoff/README.md`).
 - ✅ **Phase 1** — ingestion & state: three source adapters, SQLite storage, dedupe, idempotent runs.
 - ✅ **Phase 2** — hard filters, LinkedIn description enrichment, address + commute enrichment (Google Routes, three commute strategies — see `docs/enrichment.md`), and LLM scoring (`qwen3.6:35b-a3b`, zero tools; the `weekly_commute_fit` sub-score is an owner-calibrated Python curve — see `docs/scoring.md`).
-- ⏳ **Phase 3** (next) — the two agents (address research, then cover-letter drafting).
+- 🚧 **Phase 3** (in progress) — the hand-rolled agent tool loop + the two **research agents** have shipped: address research (warm-up) and company research (a grounded company brief that feeds the scorer). The cover-letter agent is what remains. See `docs/agents.md`.
 
 See `docs/architecture.md` for what exists now and the current stage-by-stage status.
 
@@ -100,11 +100,26 @@ uv run jobscout enrich-commute              # enrich pending offers
 uv run jobscout enrich-commute --re-enrich  # redo all (after editing home/commute prefs)
 ```
 
-Bare "Paris" (too vague to route) is flagged for a later, more precise pass.
+Bare "Paris" (too vague to route) is flagged for the address-research agent below.
 See `docs/enrichment.md` for the commute model and tunable bike bounds.
 
-**5. LLM scoring** — score each surviving (`passed`/`needs_review`) offer against
-the `preferences.yaml` rubric via local Ollama.
+**5. Research agents** — two hand-rolled agents (self-hosted SearXNG +
+read-only page fetch), run **before** enrichment and scoring. Needs `SEARXNG_URL`
+in `.env` and Ollama running. See `docs/agents.md`.
+
+```
+uv run jobscout research-address      # place the unroutable tail (bare "Paris" / unresolved)
+uv run jobscout research-company      # grounded company brief for every offer (feeds the scorer)
+uv run jobscout research-company --redo --limit 2   # re-research (or --dry-run to write nothing)
+```
+
+`research-address` validates every agent address deterministically (must geocode
+into Île-de-France) — a wrong address can never hard-reject an offer. Then re-run
+`enrich-commute` to route the freshly-placed addresses.
+
+**6. LLM scoring** — score each surviving (`passed`/`needs_review`) offer against
+the `preferences.yaml` rubric via local Ollama (with the company brief as
+advisory context, when present).
 
 ```
 uv run jobscout score                 # score offers not yet scored
@@ -125,8 +140,9 @@ uv run pytest              # offline unit tests (parsing, dedupe, idempotency)
 uv run ruff check src tests
 ```
 
-For a hands-on end-to-end walkthrough against the live sources, see
-`docs/phase-1-manual-test-plan.md`.
+For a hands-on end-to-end walkthrough against the live sources, see the manual
+test plans: `docs/phase-1-manual-test-plan.md` (ingestion & state) and
+`docs/phase-3-manual-test-plan.md` (the research agents + SearXNG wiring).
 
 ## Model bake-off
 

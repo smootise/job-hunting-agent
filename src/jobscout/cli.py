@@ -13,17 +13,40 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 
 from jobscout.pipeline import (
     enrich_commute,
     enrich_linkedin,
     filter_stage,
     ingest,
+    research_address,
+    research_company,
     score_stage,
 )
 
 
+def _force_utf8_output() -> None:
+    """Make stdout/stderr UTF-8 so summaries + accented names never crash the CLI.
+
+    On Windows the console defaults to a legacy codepage (cp1252), which raises
+    ``UnicodeEncodeError`` the moment we print a ``→`` or an accented company name
+    (e.g. 'Showroomprivé'). Our summaries and log lines legitimately contain both,
+    so we reconfigure the streams to UTF-8 with a safe error handler once at
+    startup rather than sprinkling ASCII-only text everywhere. ``reconfigure``
+    exists on Python 3.7+ TextIO streams; guard for the rare case it doesn't.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass  # already-detached or non-reconfigurable stream — best effort.
+
+
 def main(argv: list[str] | None = None) -> None:
+    _force_utf8_output()
     parser = argparse.ArgumentParser(
         prog="jobscout",
         description="Local AI agent pipeline for job hunting.",
@@ -126,6 +149,52 @@ def main(argv: list[str] | None = None) -> None:
         help="Resolve and route, report counts, write nothing.",
     )
 
+    research_addr_parser = subparsers.add_parser(
+        "research-address",
+        help="Run the address-research agent on offers the deterministic chain "
+        "can't place (bare 'Paris' / unresolved); store validated IDF addresses.",
+    )
+    research_addr_parser.add_argument(
+        "--limit", type=int, default=None,
+        help="Max candidate offers to examine this run (default: all).",
+    )
+    research_addr_parser.add_argument(
+        "--model", default=research_address.DEFAULT_MODEL,
+        help=f"Ollama model for the agent (default: {research_address.DEFAULT_MODEL}).",
+    )
+    research_addr_parser.add_argument(
+        "--redo", action="store_true",
+        help="Re-offer offers already placed by the agent (retry the search).",
+    )
+    research_addr_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Research and validate, report counts, write no addresses "
+        "(LLM-call logs are still written).",
+    )
+
+    research_co_parser = subparsers.add_parser(
+        "research-company",
+        help="Research every passed/needs_review offer's company (WTTJ profile + "
+        "web) into a grounded brief that feeds the scorer as advisory context.",
+    )
+    research_co_parser.add_argument(
+        "--limit", type=int, default=None,
+        help="Max offers to research this run (default: all pending).",
+    )
+    research_co_parser.add_argument(
+        "--model", default=research_company.DEFAULT_MODEL,
+        help=f"Ollama model for the agent (default: {research_company.DEFAULT_MODEL}).",
+    )
+    research_co_parser.add_argument(
+        "--redo", action="store_true",
+        help="Re-research every offer, not just un-researched ones.",
+    )
+    research_co_parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Research and ground, report counts, write no briefs "
+        "(LLM-call logs are still written).",
+    )
+
     score_parser = subparsers.add_parser(
         "score",
         help="Score passed/needs_review offers against the preferences.yaml "
@@ -166,6 +235,10 @@ def main(argv: list[str] | None = None) -> None:
         _run_enrich_linkedin(args)
     elif args.command == "enrich-commute":
         _run_enrich_commute(args)
+    elif args.command == "research-address":
+        _run_research_address(args)
+    elif args.command == "research-company":
+        _run_research_company(args)
     elif args.command == "score":
         _run_score(args)
     else:
@@ -280,6 +353,49 @@ def _print_enrich_commute_summary(summary: enrich_commute.EnrichCommuteSummary) 
     if summary.considered == 0 and not summary.re_enrich:
         print("  (nothing to enrich — all passed/needs_review offers already enriched; "
               "use --re-enrich to redo)")
+
+
+def _run_research_address(args: argparse.Namespace) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    summary = research_address.run_research_address(
+        model=args.model, limit=args.limit, redo=args.redo, dry_run=args.dry_run,
+    )
+    _print_research_address_summary(summary)
+
+
+def _print_research_address_summary(summary: research_address.ResearchAddressSummary) -> None:
+    """Render the address-research tally."""
+    mode = " (dry-run - nothing written)" if summary.dry_run else ""
+    scope = " [redo: all]" if summary.redo else ""
+    print(f"jobscout research-address{mode}{scope}")
+    print(f"  considered:   {summary.considered}  (passed/needs_review candidate rows)")
+    print(f"  needed agent: {summary.needed_agent}  (deterministic chain couldn't place)")
+    print(f"  resolved:     {summary.resolved}  (agent address passed IDF validation)")
+    print(f"  unresolved:   {summary.unresolved}  (no valid address; centroid fallback stands)")
+    if summary.considered == 0:
+        print("  (nothing to research — no passed/needs_review offers)")
+
+
+def _run_research_company(args: argparse.Namespace) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    summary = research_company.run_research_company(
+        model=args.model, limit=args.limit, redo=args.redo, dry_run=args.dry_run,
+    )
+    _print_research_company_summary(summary)
+
+
+def _print_research_company_summary(summary: research_company.ResearchCompanySummary) -> None:
+    """Render the company-research tally."""
+    mode = " (dry-run - nothing written)" if summary.dry_run else ""
+    scope = " [redo: all]" if summary.redo else ""
+    print(f"jobscout research-company{mode}{scope}")
+    print(f"  considered:   {summary.considered}  (passed/needs_review, not yet researched)")
+    print(f"  briefed:      {summary.briefed}  ({summary.from_wttj} had a WTTJ profile)")
+    print(f"  needs_review: {summary.needs_review}  (nothing grounded / agent error)")
+    print(f"  skipped:      {summary.skipped_no_company}  (anonymous offers — no company name to research)")
+    if summary.considered == 0 and not summary.redo:
+        print("  (nothing to research — all passed/needs_review offers already researched; "
+              "use --redo to redo)")
 
 
 def _run_score(args: argparse.Namespace) -> None:

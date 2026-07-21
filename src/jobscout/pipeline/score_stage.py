@@ -121,8 +121,10 @@ def _score_row(
     try:
         record = JobRecord.from_row(row)
         assumed_cdi = _has_assumed_cdi(row["filter_reasons"])
+        company_brief = _company_brief(row["company_brief"])
         system, user = scoring.build_prompt(
-            record, criteria, ideal, assumed_cdi=assumed_cdi
+            record, criteria, ideal, assumed_cdi=assumed_cdi,
+            company_brief=company_brief,
         )
 
         result = _generate_and_validate(generate, model, system, user, criteria)
@@ -203,6 +205,23 @@ def _finalize(result: ScoreResult, row, criteria, summary) -> None:
     result.total = scoring.compute_total(
         result.criteria_scores, result.commute_fit, criteria
     )
+
+
+def _company_brief(company_brief_json: str | None) -> dict | None:
+    """Parse the row's ``company_brief`` JSON (Phase 3), fail-soft.
+
+    Returns the brief dict for ``scoring.build_prompt`` to fence as advisory
+    context, or ``None`` when the offer wasn't researched or the value is
+    malformed (the prompt then omits the block entirely). A brief is advisory —
+    a parse failure must never block scoring.
+    """
+    if not company_brief_json:
+        return None
+    try:
+        brief = json.loads(company_brief_json)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return brief if isinstance(brief, dict) else None
 
 
 def _has_assumed_cdi(filter_reasons_json: str | None) -> bool:

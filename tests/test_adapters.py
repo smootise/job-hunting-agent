@@ -43,6 +43,43 @@ def test_france_travail_parse_offer(fixtures_dir):
     assert record.lang == "fr"
 
 
+def test_ft_stated_company_wins_over_recovery():
+    # When entreprise.nom is present, it's used verbatim (recovery is only for
+    # anonymous postings).
+    offer = {"id": "1", "intitule": "Manutan - Product manager (H/F)",
+             "entreprise": {"nom": "WEAVENN"}, "description": "Safran est un groupe."}
+    assert france_travail.parse_offer(offer).company == "WEAVENN"
+
+
+def test_ft_recovers_company_from_description_opener():
+    # Anonymous posting: "<Company> est un/une…" opener is the highest-precision
+    # source and wins over a misleading title token.
+    offer = {"id": "1", "intitule": "Product support manager lgi f/h",
+             "entreprise": {}, "description": "Safran est un groupe international de haute technologie."}
+    assert france_travail.parse_offer(offer).company == "Safran"
+
+
+def test_ft_recovers_company_from_title_patterns():
+    assert france_travail.recover_company("Manutan - Product manager (H/F)", None) == "Manutan"
+    assert france_travail.recover_company("[s3ns] : product manager sénior (h/f)", None) == "s3ns"
+
+
+def test_ft_recovery_returns_none_for_generic_titles():
+    # No reliable signal -> None (caller keeps company=''), never a wrong guess.
+    for title in ["Product Manager (H/F)", "[Offre interne] Product Manager (H/F)",
+                  "Senior Manager - Data Product Strategy (H/F)",
+                  "Product Manager - SAP Treasury H/F"]:
+        assert france_travail.recover_company(title, None) is None, title
+
+
+def test_ft_recovery_rejects_role_and_marker_words():
+    # The validator gate: role/domain/marker phrases are never companies.
+    for bad in ["Product", "Senior Manager", "Offre interne", "Lead Product Owner", "CDI", "F/H"]:
+        assert not france_travail._looks_like_company(bad), bad
+    for good in ["Safran", "Manutan", "s3ns", "BNP Paribas", "SAP"]:
+        assert france_travail._looks_like_company(good), good
+
+
 def test_linkedin_parse_native_alert(fixtures_dir):
     raw = (fixtures_dir / "linkedin_alert_synthetic.eml").read_bytes()
     records = linkedin_email.parse_alert_email(raw)
