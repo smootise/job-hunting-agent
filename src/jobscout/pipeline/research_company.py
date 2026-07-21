@@ -61,10 +61,11 @@ class ResearchCompanySummary:
 
     dry_run: bool = False
     redo: bool = False
-    considered: int = 0      # rows selected for research
-    briefed: int = 0         # rows we stored a usable (grounded) brief for
-    needs_review: int = 0    # brief empty after grounding / agent gave nothing
-    from_wttj: int = 0       # of considered, those with a deterministic WTTJ profile
+    considered: int = 0          # rows selected for research
+    briefed: int = 0             # rows we stored a usable (grounded) brief for
+    needs_review: int = 0        # brief empty after grounding / agent gave nothing
+    from_wttj: int = 0           # of considered, those with a deterministic WTTJ profile
+    skipped_no_company: int = 0  # anonymous offers with no company name to research
 
 
 def run_research_company(
@@ -123,6 +124,7 @@ def run_research_company(
                 "briefed": summary.briefed,
                 "needs_review": summary.needs_review,
                 "from_wttj": summary.from_wttj,
+                "skipped_no_company": summary.skipped_no_company,
             })
         conn.close()
 
@@ -171,6 +173,20 @@ def _research_row(
     """Research one company, fail-soft. Draft → ground → persist."""
     try:
         record = JobRecord.from_row(row)
+
+        # No company name (anonymous France Travail postings the adapter's
+        # recovery couldn't resolve) → nothing to research on. Skip the agent
+        # entirely rather than searching on an empty string, but stamp the row so
+        # it isn't retried every run (--redo re-attempts). The offer is still
+        # filtered/enriched/scored on its own description.
+        if not (record.company or "").strip():
+            summary.skipped_no_company += 1
+            logger.info("[%s] %r — no company name, skipping research",
+                        row["source"], row["title"])
+            if not dry_run:
+                db.record_company_brief(conn, row["id"], company_brief_json=None)
+            return
+
         evidence = _Evidence()
         tools_map = _build_tools(searxng, search_client, fetch_client, cache, evidence)
 

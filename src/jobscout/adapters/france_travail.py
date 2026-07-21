@@ -28,6 +28,8 @@ total, which we use as the stop condition.
 
 from __future__ import annotations
 
+import re
+
 import httpx
 
 from jobscout import normalize
@@ -145,6 +147,91 @@ def _total_from_content_range(header: str | None) -> int | None:
         return None
 
 
+# ----------------------------------------------------------------------------
+# Company-name recovery for ANONYMOUS postings
+# ----------------------------------------------------------------------------
+#
+# Many France Travail employers post without naming themselves: `entreprise.nom`
+# is legitimately absent (not an adapter bug). That leaves `company=''`, which
+# would send the Phase 3 company-research agent searching on an empty string. So
+# we make a *conservative, high-precision* attempt to recover the name from the
+# offer's own text — recovering a few reliably beats guessing (a wrong company
+# name pollutes the brief and the score). When nothing clears the bar we leave
+# `company=''` and the downstream agent skips research for that row.
+#
+# Precedence: the FR description opener ("<Company> est un/une…") wins over a
+# title pattern, because the data shows they can disagree — e.g. a title reading
+# "… lgi f/h" whose description opens "Safran est un groupe…" (Safran is the real
+# employer; "lgi" is a brand/subsidiary in the title).
+
+# "COMPANY est un/une/le/la/l' …" — the classic FR company self-intro opener.
+# Capture 1-4 leading tokens (proper-noun-ish) before " est ".
+_DESC_INTRO_RE = re.compile(
+    r"^\s*([A-ZÀ-Ý][\w&.\-]*(?:\s+[A-ZÀ-Ý0-9][\w&.\-]*){0,3})\s+est\s+(?:un|une|le|la|l['’]|né|née)\b",
+)
+
+# Title "[Name] : role" — a leading bracketed company then a colon.
+_TITLE_BRACKET_RE = re.compile(r"^\s*\[([^\]]{2,40})\]\s*:")
+
+# Title "Name - role…" — a leading segment before " - ". Only trusted when the
+# trailing part clearly names the role (so "Manager - Product & …" doesn't count).
+_TITLE_DASH_RE = re.compile(r"^\s*([A-ZÀ-Ý][\w&.\-]{1,39}(?:\s+[\w&.\-]+){0,2})\s+-\s+(.+)$")
+
+# Words that are NOT a company: roles, work-arrangement, and the "[Offre interne]"
+# marker. If an extracted candidate is (or starts with) one of these, reject it.
+_NOT_A_COMPANY = frozenset({
+    "offre", "interne", "product", "senior", "lead", "data", "digital", "technical",
+    "manager", "management", "responsable", "consultant", "owner", "marketing",
+    "chef", "head", "principal", "staff", "poste", "cdi", "cdd", "h", "f", "hf",
+})
+
+
+def _looks_like_company(candidate: str) -> bool:
+    """Reject role words / markers / obvious non-companies (precision over recall).
+
+    A candidate passes only if it's a plausible org name: 2-40 chars, not a known
+    role/marker token, not purely a generic word. This is the gate that keeps
+    recovery from inventing a wrong company (which would be worse than none).
+    """
+    c = candidate.strip().strip(".-–—:").strip()
+    if not (2 <= len(c) <= 40):
+        return False
+    # Reject if ANY token is a role/marker word — this is what stops
+    # "Offre interne", "Product Manager", "Senior …" etc. from being taken as a
+    # company. (Checking every token, not just the first, catches "Lead Data …".)
+    tokens = [t for t in re.split(r"[\s\-/]+", c) if t]
+    if any(t.lower() in _NOT_A_COMPANY for t in tokens):
+        return False
+    # Must contain at least one letter. Case is NOT required to be uppercase —
+    # real brands are often stylized lowercase ("s3ns", "doctolib"); the
+    # structural signal (a bracket, or "X est un…") is what gives us confidence.
+    return any(ch.isalpha() for ch in c)
+
+
+def recover_company(title: str | None, description: str | None) -> str | None:
+    """Best-effort company name from an anonymous offer's text, or None.
+
+    High-precision: tries the FR description opener first, then the "[Name] :" and
+    "Name - role" title patterns, validating each candidate with
+    ``_looks_like_company``. Returns None when nothing clears the bar (caller keeps
+    ``company=''``). Never raises."""
+    desc = (description or "").strip()
+    if desc:
+        m = _DESC_INTRO_RE.match(desc)
+        if m and _looks_like_company(m.group(1)):
+            return m.group(1).strip()
+
+    t = (title or "").strip()
+    if t:
+        m = _TITLE_BRACKET_RE.match(t)
+        if m and _looks_like_company(m.group(1)):
+            return m.group(1).strip()
+        m = _TITLE_DASH_RE.match(t)
+        if m and _looks_like_company(m.group(1)):
+            return m.group(1).strip()
+    return None
+
+
 def parse_offer(offer: dict) -> JobRecord:
     """Map one France Travail offer to a JobRecord.
 
@@ -153,25 +240,31 @@ def parse_offer(offer: dict) -> JobRecord:
       - contract: `typeContrat` is a code ('CDI'/'CDD'/'MIS'); we normalize it.
       - salary: `salaire.libelle` when present, else the free-text
         `commentaire` ('Selon profil', 'N/A'); None when neither is useful.
+      - company: `entreprise.nom` when the employer named itself; else a
+        conservative best-effort recovery from the offer text (anonymous
+        postings — see ``recover_company``), else '' (downstream skips research).
       - lang: France Travail postings are French; detect from text to be safe.
     """
     entreprise = offer.get("entreprise") or {}
     lieu = offer.get("lieuTravail") or {}
     origine = offer.get("origineOffre") or {}
     description = offer.get("description")
+    title = offer.get("intitule") or ""
+
+    company = entreprise.get("nom") or recover_company(title, description) or ""
 
     return JobRecord(
         source="france_travail",
         external_id=str(offer.get("id") or ""),
         url=origine.get("urlOrigine") or "",
-        title=offer.get("intitule") or "",
-        company=entreprise.get("nom") or "",
+        title=title,
+        company=company,
         location=lieu.get("libelle"),
         contract_type=normalize.parse_contract_type(offer.get("typeContrat")),
         salary_text=_format_salary(offer.get("salaire")),
         description=description,
         posted_at=offer.get("dateCreation"),
-        lang=normalize.detect_language(offer.get("intitule"), description),
+        lang=normalize.detect_language(title, description),
     )
 
 

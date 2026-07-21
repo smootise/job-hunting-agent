@@ -392,6 +392,7 @@ def _print_research_company_summary(summary: research_company.ResearchCompanySum
     print(f"  considered:   {summary.considered}  (passed/needs_review, not yet researched)")
     print(f"  briefed:      {summary.briefed}  ({summary.from_wttj} had a WTTJ profile)")
     print(f"  needs_review: {summary.needs_review}  (nothing grounded / agent error)")
+    print(f"  skipped:      {summary.skipped_no_company}  (anonymous offers — no company name to research)")
     if summary.considered == 0 and not summary.redo:
         print("  (nothing to research — all passed/needs_review offers already researched; "
               "use --redo to redo)")

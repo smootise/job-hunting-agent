@@ -185,6 +185,25 @@ def test_research_company_dry_run_writes_nothing(db_path):
     assert row["company_researched_at"] is None
 
 
+def test_research_company_skips_blank_company(db_path):
+    # Anonymous offers (empty company) must NOT run the agent (no searching on an
+    # empty string) — they're stamped skipped, with a null brief, no model call.
+    _seed(db_path, _wttj_job(company=""))
+
+    def must_not_call(model, prompt, *, system=None, log_dir=None):
+        raise AssertionError("must not call the model for a blank-company offer")
+
+    s = research_company.run_research_company(
+        db_path=db_path, _generate=must_not_call,
+        _search_client=_search_client(), _fetch_client=_fetch_client())
+    assert s.skipped_no_company == 1 and s.briefed == 0
+    conn = db.connect(db_path)
+    row = conn.execute("SELECT company_researched_at, company_brief FROM jobs").fetchone()
+    conn.close()
+    assert row["company_researched_at"] is not None  # stamped (not retried every run)
+    assert row["company_brief"] is None
+
+
 def test_research_company_only_passed_scope(db_path):
     _seed(db_path, _wttj_job(), status="rejected")
     s = research_company.run_research_company(
