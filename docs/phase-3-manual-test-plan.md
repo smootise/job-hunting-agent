@@ -204,22 +204,34 @@ full and sanity-check them.
 
 ## 8. Idempotency (research runs once)
 
-Run the **exact same command again**:
-```bash
-uv run jobscout research-company --limit 3
-```
-- [ ] Tally shows `considered: 0` and the "already researched … use --redo"
-      note. No new model calls for those rows.
+The contract: an already-researched row is **never re-offered** (default mode).
+Note ``--limit N`` walks the backlog N at a time, so re-running `--limit 3`
+researches the *next* 3 unresearched offers — you only see `considered: 0` once
+**all** offers are researched, not after one batch. So test the contract
+directly rather than by watching the count:
 
-Force a redo:
+```bash
+uv run python -c "
+from jobscout.storage import db
+conn = db.connect()
+done = {r['id'] for r in conn.execute('SELECT id FROM jobs WHERE company_researched_at IS NOT NULL')}
+todo = {r['id'] for r in db.select_jobs_to_research_company(conn)}
+print('researched:', len(done), '| default worklist:', len(todo),
+      '| overlap (must be 0):', len(done & todo))
+"
+```
+- [ ] **overlap is 0** — no researched row is ever re-offered.
+
+Force a redo (the deliberate override):
 ```bash
 uv run jobscout research-company --redo --limit 1
 ```
-- [ ] `considered: 1` — it re-researches despite the stamp.
+- [ ] It re-researches a row despite the stamp (`--redo` re-offers all).
 
-**Why it matters:** "to research" = not yet stamped. A re-run only picks up new
-offers; `--redo` is the deliberate override. Same idempotency shape as every
-Phase 2 stage.
+**Why it matters:** "to research" = passed/needs_review AND not yet stamped. A
+re-run only picks up new offers; `--redo` is the override. Same idempotency shape
+as every Phase 2 stage. (The same holds for `research-address`: its default
+worklist never re-offers an `address_source='agent'` row.)
 
 ---
 
@@ -333,11 +345,17 @@ must never abort the whole batch — every failure is fail-soft to `needs_review
       ```
       Should print "none — correct" (no write/profile capability in the agents).
 - [ ] **Home coordinates never touched by research.** The agents route no
-      commute and never read the home location:
+      commute and never read the owner's home location or preferences. Grep for
+      the actual home/prefs accessors (not the bare words `home`/`lat`/`lon`,
+      which appear benignly in docstrings and in the *office* address handling):
       ```bash
-      grep -ni "home\|lat\|lon" src/jobscout/agents/*.py || echo "none — correct"
+      grep -rn "home_location\|home\.lat\|home\.lon\|config.home\|preferences" \
+        src/jobscout/agents/ src/jobscout/pipeline/research_address.py \
+        src/jobscout/pipeline/research_company.py || echo "none — correct"
       ```
-      Should print "none — correct".
+      Should print "none — correct" (research never reads home/prefs). The only
+      `lat`/`lon` in the agents are the *office* address being resolved — the
+      destination, never the owner's origin.
 - [ ] **`SEARXNG_URL` is only a LAN URL, no secret leaked.** Skim your `.env`
       diff / commit — no API keys or addresses in the agent code paths.
 - [ ] **Untrusted-data framing is present.** Confirm fetched text is fenced and
