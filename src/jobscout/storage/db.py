@@ -636,17 +636,21 @@ def record_agent_address(
 ) -> None:
     """Persist an address the research agent found and validation confirmed.
 
-    Writes ONLY the office address + coordinates with ``address_source='agent'``;
-    it deliberately leaves ``commute_minutes`` untouched (NULL) because routing is
-    owned entirely by ``enrich-commute``, which runs after research and picks up
-    this ``agent`` address via its own ``resolve_address`` pass. Does NOT stamp
-    ``enriched_at`` — the row must still flow through ``enrich-commute`` to get a
-    commute. The candidate has already passed the deterministic BAN-geocode + IDF
-    validation net in the caller (a wrong address can never hard-reject an offer).
-    The caller commits.
+    Writes the office address + coordinates with ``address_source='agent'`` and
+    **clears any stale commute + enrichment stamp** (``commute_minutes``,
+    ``commute_mode``, ``commute_strategies``, ``enriched_at`` → NULL). Routing is
+    owned entirely by ``enrich-commute``, which runs after research; nulling the
+    stamp is what makes it re-route this row on its *normal* pass rather than
+    skipping it as already-enriched. This matters when the agent sharpens an
+    address on a row enriched in a PRIOR run from a worse address — otherwise the
+    old (now-wrong) commute would linger and never be recomputed without
+    ``--re-enrich``. The candidate has already passed the deterministic
+    BAN-geocode + IDF validation net in the caller (a wrong address can never
+    hard-reject an offer). The caller commits.
     """
     conn.execute(
         "UPDATE jobs SET address = ?, lat = ?, lon = ?, address_source = 'agent', "
-        "address_confidence = ? WHERE id = ?",
+        "address_confidence = ?, commute_minutes = NULL, commute_mode = NULL, "
+        "commute_strategies = NULL, enriched_at = NULL WHERE id = ?",
         (address, lat, lon, address_confidence, job_id),
     )

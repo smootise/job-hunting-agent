@@ -238,6 +238,55 @@ def test_research_address_skips_placeable_rows(db_path):
     assert s.needed_agent == 0  # deterministic chain placed it; agent not needed
 
 
+def test_agent_address_clears_stale_commute_and_stamp(db_path):
+    # When the agent sharpens an address on a row already enriched in a PRIOR run
+    # (stale commute + enriched_at from a worse address), those must be cleared so
+    # enrich-commute re-routes it on its normal pass instead of skipping it.
+    _seed(db_path, _wttj_job(location="Paris (Hybrid)", description="Sur site."))
+    conn = db.connect(db_path)
+    conn.execute("UPDATE jobs SET commute_minutes = 52.4, commute_mode = 'no_bike', "
+                 "commute_strategies = '{}', enriched_at = '2026-07-13T00:00:00+00:00'")
+    conn.commit()
+    conn.close()
+
+    research_address.run_research_address(
+        db_path=db_path, _generate=_gen([_ADDR_FINAL]),
+        _search_client=_search_client(), _fetch_client=_fetch_client(), _geo_client=_ban_client())
+
+    conn = db.connect(db_path)
+    row = conn.execute("SELECT address_source, commute_minutes, commute_mode, "
+                       "commute_strategies, enriched_at FROM jobs").fetchone()
+    conn.close()
+    assert row["address_source"] == "agent"
+    assert row["commute_minutes"] is None   # stale commute cleared
+    assert row["commute_mode"] is None
+    assert row["commute_strategies"] is None
+    assert row["enriched_at"] is None        # so enrich-commute re-routes it
+
+
+def test_research_address_limit_bounds_agent_runs_not_rows_scanned(db_path):
+    # Regression: --limit must bound AGENT RUNS, not rows examined. Seed several
+    # low-id PLACEABLE rows before the unplaceable ones; --limit 1 must still run
+    # the agent on an unplaceable row, not waste the budget on a placeable one.
+    for i in range(3):  # placeable rows (specific street in the description) at low ids
+        _seed(db_path, _wttj_job(external_id=f"placeable{i}", location="Boulogne-Billancourt",
+                                 description="Bureaux au 5 rue de Rivoli, 75001 Paris."))
+    _seed(db_path, _wttj_job(external_id="tail", location="Paris (Hybrid)", description="Sur site."))
+
+    s = research_address.run_research_address(
+        db_path=db_path, limit=1, _generate=_gen([_ADDR_FINAL]),
+        _search_client=_search_client(), _fetch_client=_fetch_client(), _geo_client=_ban_client())
+    # considered = all candidates scanned; needed_agent = the full unplaceable set;
+    # exactly 1 agent run happened (the limit), on the tail row.
+    assert s.considered == 4
+    assert s.needed_agent == 1  # only the "Paris (Hybrid)" row can't be placed
+    assert s.resolved == 1      # the limited agent run hit it, not a placeable row
+    conn = db.connect(db_path)
+    placed = conn.execute("SELECT external_id FROM jobs WHERE address_source='agent'").fetchall()
+    conn.close()
+    assert [r["external_id"] for r in placed] == ["tail"]
+
+
 # --- brief reaches the scorer -------------------------------------------
 
 

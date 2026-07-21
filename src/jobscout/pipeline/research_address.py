@@ -94,9 +94,21 @@ def run_research_address(
         searxng = config.searxng_url(env)  # fail loud if unset — no agent without search.
         tools_map = _build_tools(searxng, search_client, fetch_client)
 
-        rows = db.select_jobs_to_research_address(conn, limit=limit, redo=redo)
-        summary.considered = len(rows)
-        for row in rows:
+        # Two-pass so --limit bounds the AGENT RUNS, not the rows examined. The
+        # deterministic chain places most rows; if we let SQL LIMIT the scan we'd
+        # spend the whole budget on placeable low-id rows and never reach the tail
+        # that actually needs the agent (it sits wherever those offers landed).
+        # Pass 1 (cheap): run resolve_address over every candidate and keep only
+        # the ones it can't place. resolve_address stays the sole authority on
+        # address quality. Pass 2: run the agent on up to `limit` of those.
+        candidates = db.select_jobs_to_research_address(conn, redo=redo)
+        summary.considered = len(candidates)
+        worklist = [row for row in candidates if _needs_agent(row, geo_client)]
+        summary.needed_agent = len(worklist)
+        if limit is not None:
+            worklist = worklist[:limit]
+
+        for row in worklist:
             _research_row(
                 conn, row, tools_map=tools_map, model=model, generate=generate,
                 geo_client=geo_client, dry_run=dry_run, summary=summary,
@@ -144,20 +156,34 @@ def _build_tools(searxng: str, search_client, fetch_client) -> dict:
     return {"web_search": web_search, "fetch_page": fetch_page}
 
 
-def _research_row(
-    conn, row, *, tools_map, model, generate, geo_client, dry_run, summary,
-) -> None:
-    """Research one row's address, fail-soft. Only touches the unroutable tail."""
+def _needs_agent(row, geo_client) -> bool:
+    """True iff the deterministic chain can't place this row (→ the agent's job).
+
+    Runs `resolve_address` (the sole authority on address quality) and returns
+    True only for its `needs_address` / `unresolved` verdicts — the unroutable
+    tail. Fail-soft: a resolve error is treated as 'needs the agent' (better to
+    try the agent than silently drop a row). A row already placed by the agent in
+    a prior run is skipped unless --redo re-offered it (handled by the SQL select).
+    """
     try:
         record = JobRecord.from_row(row)
         resolved = address_mod.resolve_address(record, client=geo_client)
+        return resolved.needs_address or resolved.source == "unresolved"
+    except Exception:  # noqa: BLE001 — a resolve failure shouldn't hide the row.
+        return True
 
-        # The deterministic chain already places most rows — the agent is only for
-        # the tail it flags needs_address / unresolved. Everything else is skipped.
-        if not (resolved.needs_address or resolved.source == "unresolved"):
-            return
 
-        summary.needed_agent += 1
+def _research_row(
+    conn, row, *, tools_map, model, generate, geo_client, dry_run, summary,
+) -> None:
+    """Run the agent on one row already known to need it, fail-soft.
+
+    The caller's pass-1 pre-check (`_needs_agent`) has already established via
+    `resolve_address` that the deterministic chain can't place this row, so we
+    go straight to the agent here (no second resolve).
+    """
+    try:
+        record = JobRecord.from_row(row)
         candidate = address_agent.research_address(
             record.company, tools_map=tools_map, model=model, generate=generate,
         )

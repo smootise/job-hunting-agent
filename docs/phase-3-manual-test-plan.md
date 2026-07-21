@@ -136,27 +136,25 @@ before you spend a batch run on it.
 ## 5. Injection & policy guards (eyeball the tool behavior)
 
 The research agents read the open web — the highest injection-exposure surface
-in the system. These prove the structural defenses hold. Run in a Python REPL:
+in the system. These prove the structural defenses hold. Run as a one-shot
+`python -c` (an interactive REPL doesn't play well with some shells):
 
 ```bash
-uv run python
-```
-```python
-from jobscout.agents import tools
-
-# soft policy fetches off-list domains but LOGS them loudly:
+uv run python -c "
 import logging; logging.basicConfig(level=logging.WARNING)
-print(tools.fetch_page("https://example.com")[:100])   # watch for an "off-allowlist fetch" warning
-
+from jobscout.agents import tools
+# soft policy fetches off-list domains but LOGS them loudly:
+print(repr(tools.fetch_page('https://example.com')[:100]))
 # non-http schemes are refused WITHOUT a request:
-print(tools.fetch_page("file:///etc/passwd"))          # -> "(fetch refused: ...)"
-
+print(tools.fetch_page('file:///etc/passwd'))
 # hard_whitelist refuses an off-list host outright:
-print(tools.fetch_page("https://evil.example", policy=tools.POLICY_HARD))  # -> "(fetch refused ...)"
+print(tools.fetch_page('https://evil.example', policy=tools.POLICY_HARD))
+"
 ```
-- [ ] Off-allowlist soft fetch prints a **loud WARNING** log line.
-- [ ] `file://` and the hard-whitelist off-list host both return a `refused`
-      string — **no network request is made**.
+- [ ] The off-allowlist soft fetch prints a **loud WARNING** log line
+      (`off-allowlist fetch: 'example.com'`) *and* still returns the page text.
+- [ ] `file://` and the hard-whitelist off-list host both return a `(fetch
+      refused: …)` string — **no network request is made**.
 
 **Why it matters:** capability is the tool list and its policy — nothing more.
 An injected "fetch this internal URL" or a `file://` cannot escape these guards.

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 
 from jobscout.pipeline import (
     enrich_commute,
@@ -25,7 +26,27 @@ from jobscout.pipeline import (
 )
 
 
+def _force_utf8_output() -> None:
+    """Make stdout/stderr UTF-8 so summaries + accented names never crash the CLI.
+
+    On Windows the console defaults to a legacy codepage (cp1252), which raises
+    ``UnicodeEncodeError`` the moment we print a ``→`` or an accented company name
+    (e.g. 'Showroomprivé'). Our summaries and log lines legitimately contain both,
+    so we reconfigure the streams to UTF-8 with a safe error handler once at
+    startup rather than sprinkling ASCII-only text everywhere. ``reconfigure``
+    exists on Python 3.7+ TextIO streams; guard for the rare case it doesn't.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            try:
+                reconfigure(encoding="utf-8", errors="replace")
+            except (ValueError, OSError):
+                pass  # already-detached or non-reconfigurable stream — best effort.
+
+
 def main(argv: list[str] | None = None) -> None:
+    _force_utf8_output()
     parser = argparse.ArgumentParser(
         prog="jobscout",
         description="Local AI agent pipeline for job hunting.",

@@ -150,6 +150,31 @@ def test_bare_paris_alone_is_needs_address():
     assert result.needs_address
 
 
+def test_linkedin_hybrid_tag_stripped_to_bare_paris():
+    # LinkedIn-style "Paris (Hybrid)"/"(On-site)" must strip the work-mode tag →
+    # bare "Paris" → needs_address (the agent's worklist), NOT fall through to
+    # unresolved. ("Paris (Remote)" is handled by the remote short-circuit below,
+    # not here — a remote offer needs no address.)
+    for loc in ["Paris (Hybrid)", "Paris (On-site)"]:
+        job = _job(location=loc, description="Sur site.")  # onsite prose, not remote
+
+        def boom(request):
+            raise AssertionError(f"bare Paris from {loc!r} must not be geocoded")
+
+        result = address.resolve_address(job, client=httpx.Client(transport=httpx.MockTransport(boom)))
+        assert result.needs_address, f"{loc!r} -> {result.source}"
+        assert result.city == "Paris"
+
+
+def test_linkedin_remote_tag_is_remote_not_address():
+    # "Paris (Remote)" is a remote offer → the remote short-circuit wins (commute
+    # 0, no address needed), NOT the address agent's worklist.
+    job = _job(location="Paris (Remote)", description="Fully remote position.")
+    result = address.resolve_address(job, client=httpx.Client(transport=httpx.MockTransport(
+        lambda r: (_ for _ in ()).throw(AssertionError("remote needs no geocode")))))
+    assert result.is_remote
+
+
 def test_paris_arrondissement_still_routes():
     # "Paris 11e" / "Paris 75011" carry real specificity → NOT vague, geocode them.
     for loc in ["Paris 11e", "Paris 75011", "Paris 15"]:

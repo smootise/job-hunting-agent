@@ -81,12 +81,19 @@ _STREET_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Trailing remote/region tag WTTJ appends, e.g. "Paris, Île-de-France (remote: …)".
-_LOCATION_TAIL_RE = re.compile(r"\s*\(remote:.*?\)\s*$", re.IGNORECASE)
+# A trailing work-arrangement/remote tag some sources append to a location:
+#   * WTTJ:     "Paris, Île-de-France (remote: partial)"
+#   * LinkedIn: "Paris (Hybrid)", "Paris (Remote)", "Paris (On-site)"
+# Stripping it leaves the plain place, so "Paris (Hybrid)" becomes "Paris" (→ the
+# bare-Paris needs_address path) instead of falling through to `unresolved`.
+_LOCATION_TAIL_RE = re.compile(
+    r"\s*\((?:remote\b.*?|hybrid|remote|on-?site|présentiel|presentiel)\)\s*$",
+    re.IGNORECASE,
+)
 
 
 def _clean_location(location: str | None) -> str | None:
-    """Strip the "(remote: …)" tag the WTTJ adapter appends to a location."""
+    """Strip a trailing "(remote: …)" / "(Hybrid)" / "(On-site)" work-mode tag."""
     if not location:
         return None
     cleaned = _LOCATION_TAIL_RE.sub("", location).strip()
