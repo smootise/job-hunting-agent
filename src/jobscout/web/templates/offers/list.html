@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Offers · Job Scout{% endblock %}
+{% block content %}
+<h1>Offers</h1>
+
+{# The controls GET /offers/table and swap just the table. hx-push-url keeps the
+   address bar in sync so a full reload of /offers reproduces the same view. #}
+<form class="filters"
+      hx-get="/offers/table"
+      hx-target="#offers-table"
+      hx-trigger="change"
+      hx-push-url="true">
+  <label>Status
+    <select name="filter_status">
+      <option value="" {% if not active.filter_status %}selected{% endif %}>All</option>
+      <option value="passed"       {% if active.filter_status == 'passed' %}selected{% endif %}>Passed</option>
+      <option value="needs_review" {% if active.filter_status == 'needs_review' %}selected{% endif %}>Needs review</option>
+      <option value="rejected"     {% if active.filter_status == 'rejected' %}selected{% endif %}>Rejected</option>
+    </select>
+  </label>
+  <label>Source
+    <select name="source">
+      <option value="" {% if not active.source %}selected{% endif %}>All</option>
+      {% for s in sources %}
+      <option value="{{ s }}" {% if active.source == s %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Sort by
+    <select name="sort">
+      <option value="score_total"     {% if active.sort == 'score_total' %}selected{% endif %}>Overall score</option>
+      <option value="commute_minutes" {% if active.sort == 'commute_minutes' %}selected{% endif %}>Commute minutes</option>
+      <option value="posted_at"       {% if active.sort == 'posted_at' %}selected{% endif %}>Posted date</option>
+      <option value="company"         {% if active.sort == 'company' %}selected{% endif %}>Company</option>
+      {% for c in criteria %}
+      <option value="criteria:{{ c.name }}" {% if active.sort == 'criteria:' ~ c.name %}selected{% endif %}>
+        · {{ c.name | replace('_', ' ') }}
+      </option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>Order
+    <select name="dir">
+      <option value="desc" {% if active.dir == 'desc' %}selected{% endif %}>High → low</option>
+      <option value="asc"  {% if active.dir == 'asc' %}selected{% endif %}>Low → high</option>
+    </select>
+  </label>
+</form>
+
+<div id="offers-table">
+  {% include "offers/_table.html" %}
+</div>
+{% endblock %}
