@@ -92,19 +92,7 @@ alert emails carry no description). Rate-limited, cached, auto re-filters:
 uv run jobscout enrich-linkedin --limit 25
 ```
 
-**4. Enrich address + commute** for passed/needs_review offers — resolves the
-office address (Base Adresse Nationale) and computes commute time via Google
-Routes as the fastest of three strategies (transit / bike / rail+bike hybrid):
-
-```
-uv run jobscout enrich-commute              # enrich pending offers
-uv run jobscout enrich-commute --re-enrich  # redo all (after editing home/commute prefs)
-```
-
-Bare "Paris" (too vague to route) is flagged for the address-research agent below.
-See `docs/enrichment.md` for the commute model and tunable bike bounds.
-
-**5. Research agents** — two hand-rolled agents (self-hosted SearXNG +
+**4. Research agents** — two hand-rolled agents (self-hosted SearXNG +
 read-only page fetch), run **before** enrichment and scoring. Needs `SEARXNG_URL`
 in `.env` and Ollama running. See `docs/agents.md`.
 
@@ -114,9 +102,24 @@ uv run jobscout research-company      # grounded company brief for every offer (
 uv run jobscout research-company --redo --limit 2   # re-research (or --dry-run to write nothing)
 ```
 
-`research-address` validates every agent address deterministically (must geocode
-into Île-de-France) — a wrong address can never hard-reject an offer. Then re-run
-`enrich-commute` to route the freshly-placed addresses.
+`research-address` places offers whose address is too vague to route (bare
+"Paris") or otherwise unresolved, validating every agent address deterministically
+(must geocode into Île-de-France) — a wrong address can never hard-reject an
+offer. `research-company` builds a grounded company brief that feeds the scorer.
+Both run before `enrich-commute` (the sole router), which then routes the
+freshly-placed addresses.
+
+**5. Enrich address + commute** for passed/needs_review offers — resolves the
+office address (Base Adresse Nationale, or an agent-placed one from step 4) and
+computes commute time via Google Routes as the fastest of three strategies
+(transit / bike / rail+bike hybrid):
+
+```
+uv run jobscout enrich-commute              # enrich pending offers
+uv run jobscout enrich-commute --re-enrich  # redo all (after editing home/commute prefs)
+```
+
+See `docs/enrichment.md` for the commute model and tunable bike bounds.
 
 **6. LLM scoring** — score each surviving (`passed`/`needs_review`) offer against
 the `preferences.yaml` rubric via local Ollama (with the company brief as
