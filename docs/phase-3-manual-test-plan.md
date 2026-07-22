@@ -118,8 +118,10 @@ uv run python scripts/research_address_smoke.py
 ```bash
 uv run python scripts/research_company_smoke.py
 ```
-- [ ] Prints the four steps (WTTJ profile fetch → draft → grounding), ending in a
-      `grounded brief:` JSON block, or a `needs_review` message (also a pass).
+- [ ] Prints the four steps (WTTJ org-index profile → draft → grounding), ending
+      in a `grounded brief:` JSON block, or a `needs_review` message (also a pass).
+      For a WTTJ company the "profile" step shows structured facts (employees,
+      sectors, tech stack, HQ) from the organizations index.
 
 **Try a company you know is in Paris** (positive path):
 ```bash

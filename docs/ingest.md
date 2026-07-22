@@ -88,6 +88,10 @@ transparently.
 - Search hits carry **no full description** (`description` is `None`); Algolia
   also returns each hit **duplicated within a page** — intra-batch dedupe
   handles it.
+- The module also exposes **`fetch_organization`** (used by the Phase 3 company
+  agent, not by ingest): the *same* app id / key / Referer against WTTJ's
+  companion **organizations** index (`wk_cms_organizations_production`) for
+  structured company facts (headcount, sectors, HQ…). See `docs/agents.md`.
 
 ### France Travail (`adapters/france_travail.py`)
 - OAuth2 `client_credentials`, `realm=/partenaire`, scope
