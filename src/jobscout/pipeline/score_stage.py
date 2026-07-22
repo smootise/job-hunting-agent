@@ -60,10 +60,12 @@ class ScoreSummary:
 
     dry_run: bool = False
     rescore: bool = False
+    commute_only: bool = False
     considered: int = 0     # rows selected for scoring
     scored: int = 0         # rows we scored and wrote a total for
     needs_review: int = 0   # invalid JSON twice, or model error → flagged
     commute_unknown: int = 0  # of scored, those with no usable commute
+    skipped: int = 0        # commute-only: rows with no prior score to recompute
 
 
 def run_score(
@@ -73,10 +75,25 @@ def run_score(
     model: str = DEFAULT_MODEL,
     limit: int | None = None,
     rescore: bool = False,
+    commute_only: bool = False,
+    ids: list[int] | None = None,
     dry_run: bool = False,
     _generate: GenerateFn | None = None,
 ) -> ScoreSummary:
     """Score passed/needs_review offers with the LLM; blend commute; persist.
+
+    ``ids`` restricts the run to a specific set of job ids (the targeted-run
+    primitive the webapp drives); an explicit id list means "score these",
+    overriding the default unscored-only gate. When omitted, ``rescore=True``
+    selects every scoreable row.
+
+    ``commute_only`` recomputes ONLY the Python-owned ``weekly_commute_fit`` and
+    the blended total from each row's *existing* stored ``score_json`` — no LLM
+    call at all. Use it after an address/commute changes for already-scored rows:
+    the qualitative LLM scores and the reasoning are preserved verbatim (the
+    model never sees commute, so re-running it would only add nondeterministic
+    noise — see docs/scoring.md). A row with no prior score is skipped (nothing
+    to recompute; a normal scored run must produce the LLM part first).
 
     ``dry_run`` builds prompts, calls the model, computes totals and logs them
     but writes nothing to the DB (the LLM-call logs are still written — that's
@@ -86,28 +103,39 @@ def run_score(
     criteria = scoring.load_criteria(prefs)
     ideal = (prefs.get("scoring_rubric", {}) or {}).get("ideal_role_description", "")
     generate = _generate or llm_client.generate
-    summary = ScoreSummary(dry_run=dry_run, rescore=rescore)
+    summary = ScoreSummary(dry_run=dry_run, rescore=rescore, commute_only=commute_only)
 
     conn = db.connect(db_path)
     run_id = None if dry_run else db.record_run_start(conn, dry_run=dry_run)
     try:
-        rows = db.select_jobs_to_score(conn, limit=limit, rescore=rescore)
+        # commute-only touches already-scored rows, so it selects like a rescore
+        # (drop the unscored gate) unless a specific id set is given.
+        rows = db.select_jobs_to_score(
+            conn, limit=limit, rescore=rescore or commute_only, ids=ids
+        )
         summary.considered = len(rows)
         for row in rows:
-            _score_row(
-                conn, row, criteria=criteria, ideal=ideal, model=model,
-                generate=generate, dry_run=dry_run, summary=summary,
-            )
+            if commute_only:
+                _recompute_commute_row(
+                    conn, row, criteria=criteria, dry_run=dry_run, summary=summary,
+                )
+            else:
+                _score_row(
+                    conn, row, criteria=criteria, ideal=ideal, model=model,
+                    generate=generate, dry_run=dry_run, summary=summary,
+                )
         if not dry_run:
             conn.commit()
     finally:
         if run_id is not None:
             db.record_run_finish(conn, run_id, {
                 "stage": "score",
+                "commute_only": commute_only,
                 "considered": summary.considered,
                 "scored": summary.scored,
                 "needs_review": summary.needs_review,
                 "commute_unknown": summary.commute_unknown,
+                "skipped": summary.skipped,
             })
         conn.close()
 
@@ -164,6 +192,73 @@ def _score_row(
                 conn, row["id"], score_total=None,
                 score_status="needs_review", score_json=None,
             )
+
+
+# Red flags the pipeline (not the LLM) appends in `_finalize`. On a commute-only
+# recompute we strip these before re-running `_finalize`, so they aren't
+# duplicated and a now-resolved commute correctly drops its stale flag.
+_PIPELINE_RED_FLAGS = (
+    "commute unknown — pending address resolution",
+    "salary not stated",
+)
+
+
+def _recompute_commute_row(conn, row, *, criteria, dry_run, summary) -> None:
+    """Recompute weekly_commute_fit + the blended total from stored score_json.
+
+    No LLM call: the qualitative criteria, ``onsite_days``, ``remote_policy`` and
+    ``reasoning`` are read back verbatim from the row's existing ``score_json``;
+    only the Python-owned commute sub-score (from the possibly-changed
+    ``commute_minutes``) and the weighted total are recomputed. A row without a
+    usable prior score is skipped — there is nothing to fold a commute into.
+    Fail-soft per row, like ``_score_row``.
+    """
+    try:
+        stored = row["score_json"]
+        if not stored:
+            summary.skipped += 1
+            return
+        data = json.loads(stored)
+        criteria_scores = data.get("criteria_scores")
+        if not isinstance(criteria_scores, dict) or not criteria_scores:
+            # needs_review rows (NULL/empty score_json) have no LLM part to keep.
+            summary.skipped += 1
+            return
+
+        # Rebuild the result from what the model produced, dropping the
+        # pipeline-managed flags so `_finalize` re-adds exactly those that apply.
+        model_flags = [
+            f for f in (data.get("red_flags") or [])
+            if f not in _PIPELINE_RED_FLAGS
+        ]
+        result = ScoreResult(
+            criteria_scores=criteria_scores,
+            onsite_days=int(data.get("onsite_days", 0)),
+            remote_policy=str(data.get("remote_policy", "unknown")),
+            reasoning=str(data.get("reasoning", "")),
+            red_flags=model_flags,
+        )
+
+        _finalize(result, row, criteria, summary)
+
+        summary.scored += 1
+        logger.info(
+            "[%s] %r @ %r — commute-only rescore=%.0f%s",
+            row["source"], row["title"], row["company"], result.total,
+            " (commute unknown)" if result.commute_fit is None else "",
+        )
+        if not dry_run:
+            db.record_score(
+                conn, row["id"], score_total=round(result.total, 1),
+                score_status="scored",
+                score_json=json.dumps(result.as_json_dict(), ensure_ascii=False),
+            )
+    except Exception as exc:  # noqa: BLE001 — per-row fail-soft.
+        summary.skipped += 1
+        logger.warning(
+            "commute-only recompute error [%s] %r: %s",
+            row["source"], row["title"], type(exc).__name__,
+        )
 
 
 def _generate_and_validate(

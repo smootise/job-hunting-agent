@@ -219,10 +219,49 @@ def main(argv: list[str] | None = None) -> None:
         "(use after editing the rubric or once an address resolves).",
     )
     score_parser.add_argument(
+        "--commute-only",
+        action="store_true",
+        help="Recompute only weekly_commute_fit + the total from each offer's "
+        "existing score (no LLM call); use after a commute changes. Preserves "
+        "the LLM's qualitative scores and reasoning.",
+    )
+    score_parser.add_argument(
+        "--ids",
+        type=int,
+        nargs="+",
+        default=None,
+        metavar="ID",
+        help="Score only these job ids (still gated on eligibility). Implies "
+        "'score these' — overrides the default unscored-only selection.",
+    )
+    score_parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Call the model and report totals, but write no scores "
         "(the full LLM-call logs are still written).",
+    )
+
+    serve_parser = subparsers.add_parser(
+        "serve",
+        help="Launch the read-only webapp (dashboard + offer list + detail) "
+        "over data/jobs.db. Triggers nothing — it only browses existing data.",
+    )
+    serve_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Bind address (default: 127.0.0.1 — a local, single-user tool; "
+        "do not expose on 0.0.0.0).",
+    )
+    serve_parser.add_argument(
+        "--port",
+        type=int,
+        default=8020,
+        help="Port to serve on (default: 8020).",
+    )
+    serve_parser.add_argument(
+        "--reload",
+        action="store_true",
+        help="Auto-reload on code changes (development).",
     )
 
     args = parser.parse_args(argv)
@@ -241,8 +280,71 @@ def main(argv: list[str] | None = None) -> None:
         _run_research_company(args)
     elif args.command == "score":
         _run_score(args)
+    elif args.command == "serve":
+        _run_serve(args)
     else:
         parser.print_help()
+
+
+def _run_serve(args: argparse.Namespace) -> None:
+    """Launch the webapp via uvicorn, making Ctrl+C stop everything cleanly.
+
+    Imported lazily so the web dependencies (fastapi/uvicorn/jinja2) are only
+    needed by anyone who runs ``serve`` — the pipeline commands don't import
+    them. We always hand uvicorn the *import string* ``"jobscout.web.app:app"``
+    (never a pre-built instance) so the reloader and the server share one target;
+    the module-level ``app`` reads its data paths from ``resolve_settings``
+    (project root + env overrides), so only the socket bind is passed here.
+
+    **Shutdown.** ``--reload`` uses uvicorn's own supervisor, whose child
+    handles Ctrl+C. The plain path, though, has a known Windows quirk: uvicorn's
+    default SIGINT handling can miss a Ctrl+C when the event loop is idle (no
+    live connection to wake it), leaving an orphaned worker on the port. So for
+    the plain path we drive a ``uvicorn.Server`` ourselves and install our own
+    SIGINT/SIGTERM handler that flips ``server.should_exit`` — deterministic on
+    Windows and POSIX alike. A short ``timeout_graceful_shutdown`` guarantees the
+    process actually exits instead of hanging on a slow connection.
+    """
+    import signal
+
+    import uvicorn
+
+    from jobscout.web.settings import resolve_settings
+
+    settings = resolve_settings(host=args.host, port=args.port)
+    print(f"Job Scout webapp → http://{args.host}:{args.port}  (db: {settings.db_path})")
+    print("Press Ctrl+C to stop.")
+
+    if args.reload:
+        # The reloader supervises a child process and forwards Ctrl+C to it;
+        # its default signal handling is reliable, so use the stock runner.
+        uvicorn.run(
+            "jobscout.web.app:app",
+            host=args.host,
+            port=args.port,
+            reload=True,
+        )
+        return
+
+    config = uvicorn.Config(
+        "jobscout.web.app:app",
+        host=args.host,
+        port=args.port,
+        timeout_graceful_shutdown=3,
+    )
+    server = uvicorn.Server(config)
+
+    def _request_stop(signum, frame):  # noqa: ARG001 — signal handler signature
+        server.should_exit = True
+
+    signal.signal(signal.SIGINT, _request_stop)
+    signal.signal(signal.SIGTERM, _request_stop)
+    # SIGBREAK exists only on Windows; it's what a console delivers to a child
+    # started in its own process group (Ctrl+Break, and Ctrl+C in that setup).
+    # Handling it too means shutdown is reliable however the process was spawned.
+    if hasattr(signal, "SIGBREAK"):
+        signal.signal(signal.SIGBREAK, _request_stop)
+    server.run()
 
 
 def _run_ingest(args: argparse.Namespace) -> None:
@@ -404,6 +506,8 @@ def _run_score(args: argparse.Namespace) -> None:
         model=args.model,
         limit=args.limit,
         rescore=args.rescore,
+        commute_only=args.commute_only,
+        ids=args.ids,
         dry_run=args.dry_run,
     )
     _print_score_summary(summary)
@@ -412,12 +516,20 @@ def _run_score(args: argparse.Namespace) -> None:
 def _print_score_summary(summary: score_stage.ScoreSummary) -> None:
     """Render the scoring tally."""
     mode = " (dry-run - nothing written)" if summary.dry_run else ""
-    scope = " [rescore: all scoreable]" if summary.rescore else ""
+    if summary.commute_only:
+        scope = " [commute-only: recompute from stored score, no LLM]"
+    elif summary.rescore:
+        scope = " [rescore: all scoreable]"
+    else:
+        scope = ""
     print(f"jobscout score{mode}{scope}")
-    print(f"  considered:   {summary.considered}  (passed/needs_review, not yet scored)")
+    print(f"  considered:   {summary.considered}")
     print(f"  scored:       {summary.scored}  ({summary.commute_unknown} with commute unknown)")
-    print(f"  needs_review: {summary.needs_review}  (invalid JSON x2 or model error)")
-    if summary.considered == 0 and not summary.rescore:
+    if summary.commute_only:
+        print(f"  skipped:      {summary.skipped}  (no prior score to recompute)")
+    else:
+        print(f"  needs_review: {summary.needs_review}  (invalid JSON x2 or model error)")
+    if summary.considered == 0 and not (summary.rescore or summary.commute_only):
         print("  (nothing to score — all passed/needs_review offers already scored; "
               "use --rescore to redo)")
 

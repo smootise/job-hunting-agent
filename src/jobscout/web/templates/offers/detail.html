@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} · Job Scout{% endblock %}
+{% block content %}
+
+<div class="detail-head">
+  <div>
+    <h1 style="margin-bottom:0.25rem">{{ job.title }}</h1>
+    <div style="color:var(--text-muted)">{{ job.company }}{% if job.location %} · {{ job.location }}{% endif %}</div>
+    <div style="margin-top:0.5rem">
+      {% if job.filter_status %}<span class="badge {{ job.filter_status | badge_class }}">{{ job.filter_status | replace('_', ' ') }}</span>{% endif %}
+      {% if job.score_status %}<span class="badge {{ job.score_status | badge_class }}">{{ job.score_status | replace('_', ' ') }}</span>{% endif %}
+      <span class="chip">{{ job.source }}</span>
+    </div>
+  </div>
+  <div style="text-align:right">
+    <div class="score-big">{% if job.score_total is not none %}{{ job.score_total | round1 }}{% else %}—{% endif %}</div>
+    <div style="color:var(--text-muted);font-size:0.8rem">/ 100</div>
+  </div>
+</div>
+
+{# ---- 1. Summary + verdict ----------------------------------------- #}
+<section class="block card">
+  <h2 style="margin-top:0">Summary &amp; verdict</h2>
+  {% if job.company_brief.summary %}<p class="reasoning">{{ job.company_brief.summary }}</p>{% endif %}
+  {% if job.score.reasoning %}
+    <p class="reasoning"><strong>Fit:</strong> {{ job.score.reasoning }}</p>
+  {% else %}
+    <p class="section-note">Not scored yet — no verdict available.</p>
+  {% endif %}
+  {% if job.score.red_flags %}
+    <ul class="red-flags">
+      {% for flag in job.score.red_flags %}<li>{{ flag }}</li>{% endfor %}
+    </ul>
+  {% endif %}
+</section>
+
+{# ---- 2. Full score breakdown -------------------------------------- #}
+<section class="block card">
+  <h2 style="margin-top:0">Score breakdown</h2>
+  {% if job.score.criteria_scores or job.score.weekly_commute_fit is defined %}
+    <p class="section-note">
+      Weights are relative (they sum to {{ criteria | map(attribute='weight') | sum }}, not 100).
+      Onsite days: {{ job.score.onsite_days | default('—') }} · Remote policy: {{ job.score.remote_policy | default('—') }}
+      {% if job.score.commute_included_in_total is defined and not job.score.commute_included_in_total %}
+        · <span class="badge badge--warn">commute unknown, dropped from total</span>
+      {% endif %}
+    </p>
+    <div class="criteria-grid">
+      {% for c in criteria %}
+        {% if c.name == 'weekly_commute_fit' %}
+          {% set val = job.score.weekly_commute_fit %}
+          {% set computed = true %}
+        {% else %}
+          {% set val = job.score.criteria_scores.get(c.name) %}
+          {% set computed = false %}
+        {% endif %}
+        <div class="criterion">
+          <div class="cname">{{ c.name | replace('_', ' ') }}
+            <small>· w{{ c.weight }}{% if computed %} · computed{% endif %}</small>
+          </div>
+          <div class="meter"><span style="width: {{ val | pct }}%"></span></div>
+          <div class="cval">{% if val is not none %}{{ val | round1 }}{% else %}—{% endif %}</div>
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p class="empty">No score breakdown yet.</p>
+  {% endif %}
+</section>
+
+{# ---- 3. Commute detail -------------------------------------------- #}
+<section class="block card">
+  <h2 style="margin-top:0">Commute</h2>
+  {% if job.address_source == 'remote' %}
+    <p>Remote role — no commute.</p>
+  {% elif job.commute %}
+    <p>
+      Best: <strong>{{ job.commute.best_minutes | round1 }} min</strong>
+      via <span class="chip">{{ job.commute.best_mode }}</span>
+    </p>
+    {% if job.commute.strategies %}
+    <div class="legs">
+      {% for name, minutes in job.commute.strategies.items() %}
+      <div class="strategy-row">
+        <span class="sname">{{ name | replace('_', ' ') }}</span>
+        <span class="num">{% if minutes is not none %}{{ minutes | round1 }} min{% else %}n/a{% endif %}</span>
+        {% set legs = job.commute.detail.get(name) if job.commute.detail else none %}
+        {% if legs %}
+          <span style="color:var(--text-muted)">
+            {% for leg in legs %}{{ leg.mode | lower }} {{ leg.minutes | round1 }}m{% if leg.line %} ({{ leg.line }}){% endif %}{% if not loop.last %} → {% endif %}{% endfor %}
+          </span>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    <p class="section-note" style="margin-top:0.75rem">
+      Office: {{ job.address or '—' }}
+      {% if job.address_source %}<span class="chip">{{ job.address_source }}</span>{% endif %}
+      {% if job.address_confidence %}<span class="chip">{{ job.address_confidence }} confidence</span>{% endif %}
+    </p>
+  {% else %}
+    <p class="empty">No commute data{% if job.address_source == 'needs_address' %} — address too vague to route{% endif %}.</p>
+  {% endif %}
+
+  {# V2: office-location map. lat/lon are the OFFICE (public), safe to show —
+     the owner's home coordinates are never stored on the jobs row. Wire a
+     locally-vendored map + offline tiles here in V2; hidden for now. #}
+  {% if job.lat is not none and job.lon is not none %}
+  <div id="office-map" hidden data-lat="{{ job.lat }}" data-lon="{{ job.lon }}"></div>
+  {% endif %}
+</section>
+
+{# ---- 4. Company research + posting + metadata --------------------- #}
+<section class="block card">
+  <h2 style="margin-top:0">Company</h2>
+  {% if job.company_brief and job.company_brief.get('summary') %}
+    <div class="meta-grid">
+      {% if job.company_brief.product %}<div><div class="k">Product</div>{{ job.company_brief.product }}</div>{% endif %}
+      {% if job.company_brief.culture %}<div><div class="k">Culture</div>{{ job.company_brief.culture }}</div>{% endif %}
+      {% if job.company_brief.size_signal %}<div><div class="k">Size</div>{{ job.company_brief.size_signal }}</div>{% endif %}
+      {% if job.company_brief.ai_usage %}<div><div class="k">AI usage</div>{{ job.company_brief.ai_usage }}</div>{% endif %}
+      {% if job.company_brief.confidence %}<div><div class="k">Confidence</div>{{ job.company_brief.confidence }}</div>{% endif %}
+    </div>
+    {% if job.company_brief.sources %}
+      <p class="section-note">Sources:
+        {% for src in job.company_brief.sources %}<a href="{{ src }}" target="_blank" rel="noopener noreferrer">[{{ loop.index }}]</a> {% endfor %}
+      </p>
+    {% endif %}
+  {% else %}
+    <p class="section-note">No company research yet.</p>
+  {% endif %}
+</section>
+
+<section class="block card">
+  <h2 style="margin-top:0">Original posting</h2>
+  <div class="meta-grid" style="margin-bottom:1rem">
+    <div><div class="k">Contract</div>{{ job.contract_type or '—' }}</div>
+    <div><div class="k">Salary</div>{{ job.salary_text or '—' }}</div>
+    <div><div class="k">Posted</div>{{ job.posted_at | reltime }}</div>
+    <div><div class="k">First seen</div>{{ job.first_seen_at | reltime }}</div>
+    <div><div class="k">Language</div>{{ job.lang or '—' }}</div>
+    <div><div class="k">Link</div><a href="{{ job.url }}" target="_blank" rel="noopener noreferrer">View original posting ↗</a></div>
+  </div>
+  {% if job.description %}<div class="posting">{{ job.description }}</div>{% endif %}
+</section>
+
+<p style="margin-top:1.5rem"><a href="/offers">← Back to offers</a></p>
+{% endblock %}

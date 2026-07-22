@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · Job Scout{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+{# ---- Agent pipeline (LIVE in V1) ---------------------------------- #}
+<h2>Agent pipeline</h2>
+<p class="section-note">How offers flow through ingest → filter → enrich → score.</p>
+
+<div class="tiles">
+  <div class="tile tile--accent">
+    <div class="value">{{ stats.total }}</div>
+    <div class="label">Total offers</div>
+  </div>
+  <div class="tile">
+    <div class="value">{{ stats.by_filter_status.passed }}</div>
+    <div class="label">Passed filters</div>
+  </div>
+  <div class="tile">
+    <div class="value">{{ stats.by_filter_status.needs_review }}</div>
+    <div class="label">Needs review</div>
+  </div>
+  <div class="tile">
+    <div class="value">{{ stats.by_filter_status.rejected }}</div>
+    <div class="label">Rejected</div>
+  </div>
+  <div class="tile">
+    <div class="value">{{ stats.scored }}</div>
+    <div class="label">Scored</div>
+  </div>
+</div>
+
+<h2>Pending work</h2>
+<p class="section-note">What the next CLI run of each stage would pick up.</p>
+<div class="tiles">
+  <div class="tile"><div class="value">{{ stats.to_filter }}</div><div class="label">To filter</div></div>
+  <div class="tile"><div class="value">{{ stats.to_enrich }}</div><div class="label">To enrich (commute)</div></div>
+  <div class="tile"><div class="value">{{ stats.to_score }}</div><div class="label">To score</div></div>
+  <div class="tile"><div class="value">{{ stats.to_research_company }}</div><div class="label">To research (company)</div></div>
+  <div class="tile"><div class="value">{{ stats.to_research_address }}</div><div class="label">To research (address)</div></div>
+</div>
+
+<h2>Last run</h2>
+<div class="card">
+  {% if last_run %}
+    <div class="lastrun">
+      <div class="kv"><div class="k">Stage</div><div class="v">{{ last_run.stage or "ingest" }}</div></div>
+      <div class="kv"><div class="k">Started</div><div class="v">{{ last_run.started_at | reltime }}</div></div>
+      <div class="kv"><div class="k">Finished</div>
+        <div class="v">{% if last_run.finished_at %}{{ last_run.finished_at | reltime }}{% else %}<span class="badge badge--warn">running / interrupted</span>{% endif %}</div>
+      </div>
+      {% if last_run.dry_run %}<div class="kv"><div class="k">Mode</div><div class="v"><span class="chip">dry run</span></div></div>{% endif %}
+    </div>
+    {% if last_run.source_counts %}
+      <div class="lastrun">
+        {% for name, counts in last_run.source_counts.items() %}
+          <div class="kv"><div class="k">{{ name }}</div>
+            <div class="v">{% if counts is mapping and 'new' in counts %}{{ counts.new }} new{% else %}{{ counts }}{% endif %}</div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+  {% else %}
+    <p class="empty">No runs recorded yet.</p>
+  {% endif %}
+</div>
+
+{% if recent_runs %}
+<h2>Recent runs</h2>
+<div class="table-wrap">
+  <table>
+    <thead><tr><th>Stage</th><th>Started</th><th>Finished</th><th>Mode</th></tr></thead>
+    <tbody>
+      {% for run in recent_runs %}
+      <tr>
+        <td>{{ run.stage or "ingest" }}</td>
+        <td>{{ run.started_at | reltime }}</td>
+        <td>{% if run.finished_at %}{{ run.finished_at | reltime }}{% else %}—{% endif %}</td>
+        <td>{% if run.dry_run %}<span class="chip">dry run</span>{% else %}live{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{# ---- My review (DESIGNED, HIDDEN in V1) --------------------------- #}
+{# V2: application tracking. When the offer_review table + stats.review_stats()
+   land, flip `{% if false %}` to `{% if true %}` and feed the counts. Layout is
+   kept here so V2 is a drop-in, not a redesign. #}
+{% if false %}
+<h2>My review</h2>
+<p class="section-note">Where I am in my own application process.</p>
+<div class="tiles">
+  <div class="tile"><div class="value">0</div><div class="label">To review</div></div>
+  <div class="tile"><div class="value">0</div><div class="label">Applied</div></div>
+  <div class="tile"><div class="value">0</div><div class="label">Not interested</div></div>
+</div>
+{% endif %}
+{% endblock %}

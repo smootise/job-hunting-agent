@@ -16,6 +16,7 @@ rationale and phase plan.
 - ✅ **Phase 1** — ingestion & state: three source adapters, SQLite storage, dedupe, idempotent runs.
 - ✅ **Phase 2** — hard filters, LinkedIn description enrichment, address + commute enrichment (Google Routes, three commute strategies — see `docs/enrichment.md`), and LLM scoring (`qwen3.6:35b-a3b`, zero tools; the `weekly_commute_fit` sub-score is an owner-calibrated Python curve — see `docs/scoring.md`).
 - 🚧 **Phase 3** (in progress) — the hand-rolled agent tool loop + the two **research agents** have shipped: address research (warm-up) and company research (a grounded company brief that feeds the scorer). The cover-letter agent is what remains. See `docs/agents.md`.
+- ✅ **Webapp v1** — a local, read-only dashboard / ranked offer list / offer detail (`jobscout serve`, FastAPI + HTMX). Browsing only; see `docs/webapp.md`.
 
 See `docs/architecture.md` for what exists now and the current stage-by-stage status.
 
@@ -91,19 +92,7 @@ alert emails carry no description). Rate-limited, cached, auto re-filters:
 uv run jobscout enrich-linkedin --limit 25
 ```
 
-**4. Enrich address + commute** for passed/needs_review offers — resolves the
-office address (Base Adresse Nationale) and computes commute time via Google
-Routes as the fastest of three strategies (transit / bike / rail+bike hybrid):
-
-```
-uv run jobscout enrich-commute              # enrich pending offers
-uv run jobscout enrich-commute --re-enrich  # redo all (after editing home/commute prefs)
-```
-
-Bare "Paris" (too vague to route) is flagged for the address-research agent below.
-See `docs/enrichment.md` for the commute model and tunable bike bounds.
-
-**5. Research agents** — two hand-rolled agents (self-hosted SearXNG +
+**4. Research agents** — two hand-rolled agents (self-hosted SearXNG +
 read-only page fetch), run **before** enrichment and scoring. Needs `SEARXNG_URL`
 in `.env` and Ollama running. See `docs/agents.md`.
 
@@ -113,9 +102,24 @@ uv run jobscout research-company      # grounded company brief for every offer (
 uv run jobscout research-company --redo --limit 2   # re-research (or --dry-run to write nothing)
 ```
 
-`research-address` validates every agent address deterministically (must geocode
-into Île-de-France) — a wrong address can never hard-reject an offer. Then re-run
-`enrich-commute` to route the freshly-placed addresses.
+`research-address` places offers whose address is too vague to route (bare
+"Paris") or otherwise unresolved, validating every agent address deterministically
+(must geocode into Île-de-France) — a wrong address can never hard-reject an
+offer. `research-company` builds a grounded company brief that feeds the scorer.
+Both run before `enrich-commute` (the sole router), which then routes the
+freshly-placed addresses.
+
+**5. Enrich address + commute** for passed/needs_review offers — resolves the
+office address (Base Adresse Nationale, or an agent-placed one from step 4) and
+computes commute time via Google Routes as the fastest of three strategies
+(transit / bike / rail+bike hybrid):
+
+```
+uv run jobscout enrich-commute              # enrich pending offers
+uv run jobscout enrich-commute --re-enrich  # redo all (after editing home/commute prefs)
+```
+
+See `docs/enrichment.md` for the commute model and tunable bike bounds.
 
 **6. LLM scoring** — score each surviving (`passed`/`needs_review`) offer against
 the `preferences.yaml` rubric via local Ollama (with the company brief as
@@ -124,7 +128,9 @@ advisory context, when present).
 ```
 uv run jobscout score                 # score offers not yet scored
 uv run jobscout score --dry-run --limit 2   # call the model, write nothing
-uv run jobscout score --rescore       # redo all (after editing the rubric / a resolved address)
+uv run jobscout score --rescore       # redo all (after editing the rubric)
+uv run jobscout score --commute-only  # recompute only weekly_commute_fit + total, NO LLM call
+uv run jobscout score --ids 61 75     # score only these job ids (composes with --commute-only)
 ```
 
 The LLM (`qwen3.6:35b-a3b`, zero tools) scores the qualitative criteria and infers
@@ -132,6 +138,28 @@ The LLM (`qwen3.6:35b-a3b`, zero tools) scores the qualitative criteria and infe
 owner-calibrated Python curve over `commute_minutes × 2 × onsite_days`, blended
 into a normalized 0–100 total. Unknown commutes are flagged, never zeroed. See
 `docs/scoring.md`.
+
+When a commute changes for already-scored offers (e.g. the address agent placed
+an office, then `enrich-commute` routed it), `--commute-only` folds the new
+commute into the total with **no model call** — it preserves the LLM's
+qualitative scores + reasoning (the model never sees commute, so re-running it
+would only add noise). `--ids` scopes any score run to specific offers.
+
+**7. Browse the results (webapp)** — a local, read-only dashboard over
+`data/jobs.db`: pipeline stats, a sortable/filterable ranked offer list, and a
+per-offer detail page (verdict, full score breakdown, commute detail, company
+brief + original posting).
+
+```
+uv run jobscout serve                 # → http://127.0.0.1:8020  (Ctrl+C to stop)
+uv run jobscout serve --port 9000     # a different port
+uv run jobscout serve --reload        # auto-reload on code changes (development)
+```
+
+FastAPI + HTMX, no build step, no CDN (htmx is vendored locally). It only
+*browses* — it triggers no pipeline stage, writes nothing, and makes no external
+call. The offer list sorts by the overall score or any individual rubric
+criterion (best culture fit, best commute fit, …). See `docs/webapp.md`.
 
 ## Tests
 

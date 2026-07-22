@@ -1,0 +1,45 @@
+{# Shared by the full /offers page (via include) and the HTMX /offers/table
+   fragment. Renders ONLY the table so a partial swap replaces #offers-table. #}
+{% if jobs %}
+<div class="table-wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Score</th>
+        <th>Title</th>
+        <th>Company</th>
+        <th>Source</th>
+        <th>Status</th>
+        <th>Commute</th>
+        <th>Remote</th>
+        <th>Flags</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td class="score-cell">
+          {% if job.score_total is not none %}{{ job.score_total | round1 }}{% else %}—{% endif %}
+        </td>
+        <td><a href="/offers/{{ job.id }}">{{ job.title }}</a></td>
+        <td>{{ job.company }}</td>
+        <td><span class="chip">{{ job.source }}</span></td>
+        <td>
+          {% if job.filter_status %}<span class="badge {{ job.filter_status | badge_class }}">{{ job.filter_status | replace('_', ' ') }}</span>{% endif %}
+          {% if job.score_status == 'needs_review' %}<span class="badge badge--warn">score?</span>{% endif %}
+        </td>
+        <td class="num">{% if job.commute_minutes is not none %}{{ job.commute_minutes | round1 }} min{% elif job.address_source == 'remote' %}remote{% else %}—{% endif %}</td>
+        <td>{% if job.score.remote_policy %}<span class="chip">{{ job.score.remote_policy }}</span>{% endif %}</td>
+        <td>
+          {% if job.address_source in ('needs_address', none) and job.address_source != 'remote' and job.commute_minutes is none %}<span class="badge badge--muted">needs address</span>{% endif %}
+          {% if job.score.red_flags %}<span class="badge badge--bad" title="{{ job.score.red_flags | join('; ') }}">{{ job.score.red_flags | length }} flag{{ 's' if job.score.red_flags | length != 1 }}</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="section-note">{{ jobs | length }} offer{{ 's' if jobs | length != 1 }}.</p>
+{% else %}
+<p class="empty">No offers match these filters.</p>
+{% endif %}

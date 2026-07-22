@@ -499,7 +499,11 @@ def record_enrichment(
 
 
 def select_jobs_to_score(
-    conn: sqlite3.Connection, *, limit: int | None = None, rescore: bool = False
+    conn: sqlite3.Connection,
+    *,
+    limit: int | None = None,
+    rescore: bool = False,
+    ids: list[int] | None = None,
 ) -> list[sqlite3.Row]:
     """Return offers awaiting an LLM score (or all scoreable, when rescoring).
 
@@ -511,17 +515,32 @@ def select_jobs_to_score(
     enrichment; a row with a NULL commute is scored with the commute criterion
     flagged unknown, and a later ``--rescore`` folds the commute in once an
     address resolves. ``rescore=True`` selects every scoreable row so a
-    preferences.yaml rubric change (or a fresh commute) can be re-applied. Rows
-    carry every column, so ``JobRecord.from_row`` consumes them directly.
+    preferences.yaml rubric change (or a fresh commute) can be re-applied.
+
+    ``ids`` restricts to a specific set of job ids (still gated on the eligibility
+    predicate — a rejected/unfiltered id is silently excluded, never scored). It
+    is the targeted-run primitive the webapp will drive; when given, the
+    ``scored_at IS NULL`` gate is dropped (an explicit id list is an explicit
+    "score these", like ``rescore`` but scoped). Rows carry every column, so
+    ``JobRecord.from_row`` consumes them directly.
     """
     sql = "SELECT * FROM jobs WHERE filter_status IN ('passed', 'needs_review')"
-    if not rescore:
+    params: list[object] = []
+    if ids is not None:
+        if not ids:
+            return []  # explicit empty selection → nothing, not "everything".
+        placeholders = ", ".join("?" for _ in ids)
+        sql += f" AND id IN ({placeholders})"
+        params.extend(ids)
+    elif not rescore:
+        # An explicit id list already means "score these"; the unscored gate
+        # only applies to the untargeted default run.
         sql += " AND scored_at IS NULL"
     sql += " ORDER BY id"
     if limit is not None:
         sql += " LIMIT ?"
-        return conn.execute(sql, (limit,)).fetchall()
-    return conn.execute(sql).fetchall()
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
 
 
 def record_score(

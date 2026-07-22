@@ -6,7 +6,7 @@ runs after the hard filters + commute enrichment and before the digest, on
 rejected offers are never scored). Each offer gets one zero-tool LLM call, a
 schema-validated result, and a weighted 0–100 total.
 
-CLI: `jobscout score [--limit N] [--model NAME] [--rescore] [--dry-run]`.
+CLI: `jobscout score [--limit N] [--model NAME] [--rescore] [--commute-only] [--ids ID ...] [--dry-run]`.
 
 Code: `pipeline/scoring.py` (pure: prompt, validation, weighted total),
 `pipeline/commute_score.py` (pure: the commute sub-score curve),
@@ -103,7 +103,9 @@ both the numerator and the denominator** (the total is renormalized over the
 remaining 10 criteria) and a `"commute unknown — pending address resolution"`
 red_flag is added. A NULL is *unknown*, not *0 minutes*: injecting a zero (or a
 max) would silently corrupt the score. These are exactly the rows the Phase 3
-address agent will sharpen, after which `--rescore` folds the commute in.
+address agent will sharpen, after which the commute is folded in — via
+`--commute-only` (recompute the Python sub-score from the stored breakdown, no
+LLM call — the cheap, preferred path) or a full `--rescore`.
 
 A fully-remote offer is enriched with `commute_minutes = 0` and correctly scores
 the maximum on this criterion (it is *not* the unknown case).
@@ -131,6 +133,27 @@ stamp — a re-run skips scored rows; `--rescore` redoes all). Added additively 
 enrichment**: a row with a NULL commute is still scored (commute flagged
 unknown), so there's no ordering dependency on `enrich-commute`; `--rescore`
 picks up commute improvements later.
+
+### Targeted & commute-only runs
+
+Two flags scope the same stage without a full re-score of everything:
+
+- **`--ids ID ...`** restricts the run to specific job ids (still gated on the
+  eligibility predicate — a rejected/unfiltered id is silently excluded, never
+  scored). An explicit id list means *"score these"*, so it overrides the
+  `scored_at IS NULL` gate. This is the targeted-run primitive the webapp drives;
+  `run_score(ids=[...])` is the programmatic entry point.
+- **`--commute-only`** recomputes **only** `weekly_commute_fit` + the blended
+  total from each row's *existing* `score_json` — **no LLM call**. The
+  qualitative criteria, `onsite_days`, `remote_policy` and `reasoning` are read
+  back verbatim; only the Python-owned commute sub-score (from a possibly-changed
+  `commute_minutes`) and the total change, and a now-resolved commute drops its
+  stale `"commute unknown"` red_flag. Rows with no prior score are skipped
+  (nothing to fold a commute into). **Why not just `--rescore`?** The model never
+  sees the commute (security invariant below), so re-running it after a commute
+  change adds only nondeterministic noise to the qualitative scores — the
+  commute-only recompute is both cheaper *and* more correct. Composes with
+  `--ids` (`score --commute-only --ids 61 75`).
 
 ## Security invariants (held, and tested)
 

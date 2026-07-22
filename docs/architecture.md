@@ -31,6 +31,7 @@ framework in v1 — the loop is readable on purpose.
 | Address-research agent | ✅ Phase 3 | `agents/address_agent.py`, `pipeline/research_address.py` |
 | Company-research agent | ✅ Phase 3 | `agents/company_agent.py`, `pipeline/research_company.py` |
 | Cover-letter agent | ⏳ Phase 3 (next) | — |
+| Webapp (read-only: dashboard / list / detail) | ✅ v1 | `web/`, `storage/{queries,stats}.py` — see `docs/webapp.md` |
 | Digest / scheduling / ops | ⏳ Phase 4 | — |
 
 ## Package layout
@@ -42,6 +43,8 @@ src/jobscout/
   config.py          preferences.yaml + .env loaders, credential getters
   adapters/          one module per source (wttj, france_travail, linkedin_email)
   storage/db.py      SQLite schema, idempotent upsert, dedupe, run ledger
+  storage/queries.py display reads for the webapp (get_job, list_jobs + sort guard)
+  storage/stats.py   dashboard aggregates (funnel + pending counts, run ledger)
   pipeline/ingest.py       ingest orchestration (fail-soft per source, dry-run)
   pipeline/filters.py      pure hard-filter logic + FilterVerdict
   pipeline/salary.py       free-text salary → annual-gross EUR range parser
@@ -63,6 +66,7 @@ src/jobscout/
   agents/company_agent.py   company brief (WTTJ profile → agent → grounding pass)
   pipeline/research_address.py  address-agent orchestration (tail only, fail-soft)
   pipeline/research_company.py  company-research orchestration (all offers)
+  web/               read-only FastAPI + HTMX webapp (dashboard/list/detail)
   cli.py             `jobscout` entry point
   llm/client.py      thin Ollama wrapper with full-interaction logging
 ```
@@ -126,6 +130,23 @@ resolution steps the brief listed were **not** built as address pre-filters — 
 registry returns an HQ address (a weak fit for the bare-"Paris" worklist), so
 they're deferred as an optional future pre-filter; the WTTJ profile instead feeds
 the *company* brief deterministically.
+
+**Webapp v1 (shipped, alongside Phase 3).** A local, **read-only** FastAPI + HTMX
+UI (`jobscout serve`) over `data/jobs.db`: a stats dashboard, a ranked
+offer list sortable by the overall score or any single rubric criterion, and a
+per-offer detail page. It's mounted on two new read layers —
+`storage/queries.py` (display reads, allowlist-guarded sorting) and
+`storage/stats.py` (dashboard counts that mirror the pipeline worklists) — and
+triggers no stage, writes nothing, and makes no external call. Application
+tracking, run-CLI buttons, and a company-location map are designed-in but
+deferred (V2). Full detail in `docs/webapp.md`.
+
+The scorer also gained two targeting flags used by the above and by ad-hoc runs:
+**`score --ids ID ...`** (score only specific offers — the primitive a future
+run-from-UI feature drives) and **`score --commute-only`** (recompute only the
+Python `weekly_commute_fit` + total from the stored breakdown, **no LLM call** —
+folds a changed commute into an already-scored offer without re-rolling the
+model's qualitative judgment). See `docs/scoring.md`.
 
 **Next up:** the cover-letter agent (reuses `agents/loop.py` + `fetch_page` in
 `hard_whitelist` mode + one sandboxed `save_draft`).

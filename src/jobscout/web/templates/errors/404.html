@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Not found · Job Scout{% endblock %}
+{% block content %}
+<h1>Offer not found</h1>
+<p class="empty">No offer with id {{ job_id }}.</p>
+<p><a href="/offers">← Back to offers</a></p>
+{% endblock %}
