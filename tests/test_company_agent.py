@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import httpx
+
 from jobscout.agents import company_agent as ca
 from jobscout.models import JobRecord
 
@@ -34,29 +36,52 @@ def _gen(scripted):
     return generate
 
 
-# --- step 1: deterministic WTTJ profile ---------------------------------
+# --- step 1: deterministic WTTJ org-index profile -----------------------
 
 
-def test_wttj_profile_url_from_wttj_offer():
-    assert ca.wttj_profile_url(_rec()) == "https://www.welcometothejungle.com/fr/companies/acme"
+def _org_client(hit):
+    """Mock the WTTJ organizations Algolia endpoint returning one hit (or none)."""
+    def handler(request):
+        results = [{"hits": [hit] if hit else []}]
+        return httpx.Response(200, json={"results": results})
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
 
 
-def test_wttj_profile_url_none_for_non_wttj():
-    assert ca.wttj_profile_url(_rec(source="france_travail")) is None
+_ACME_HIT = {
+    "name": "ACME", "slug": "acme", "nb_employees": 200,
+    "size": {"en": "Between 50 and 250 employees"},
+    "sectors_name": {"en": [{"Tech": "Software"}, {"Tech": "SaaS / Cloud Services"}]},
+    "tools_name": [{"backend": "Python"}, {"frontend": "React JS"}],
+    "offices": [{"city": "Paris", "state": "Ile-de-France", "is_headquarter": True}],
+    "labels": ["bcorp"],
+}
 
 
-def test_wttj_profile_url_none_for_unparseable():
-    assert ca.wttj_profile_url(_rec(url="https://x.com/no-slug")) is None
+def test_wttj_slug_from_offer_url():
+    assert ca._wttj_slug(_rec()) == "acme"
+    assert ca._wttj_slug(_rec(source="france_travail")) is None
+    assert ca._wttj_slug(_rec(url="https://x.com/no-slug")) is None
 
 
-def test_fetch_wttj_profile_returns_text():
-    url, text = ca.fetch_wttj_profile(_rec(), fetch=lambda u, **k: "ACME builds AI. ~200 employees.")
-    assert url.endswith("/companies/acme") and text.startswith("ACME builds AI")
+def test_fetch_wttj_profile_returns_structured_seed():
+    src, text = ca.fetch_wttj_profile(_rec(), client=_org_client(_ACME_HIT))
+    assert src and "welcometothejungle" in src
+    assert "Employees: 200" in text
+    assert "Software" in text and "Python" in text
+    assert "Ile-de-France" in text and "bcorp" in text
 
 
-def test_fetch_wttj_profile_failsoft_on_refusal():
-    url, text = ca.fetch_wttj_profile(_rec(), fetch=lambda u, **k: "(fetch refused: x)")
-    assert url is not None and text is None
+def test_fetch_wttj_profile_none_on_no_hit():
+    src, text = ca.fetch_wttj_profile(_rec(), client=_org_client(None))
+    assert src is None and text is None
+
+
+def test_fetch_wttj_profile_none_on_slug_mismatch():
+    # The offer's slug is 'acme' but the index returns a different company.
+    other = dict(_ACME_HIT, slug="acme-corp-usa", name="ACME Corp USA")
+    src, text = ca.fetch_wttj_profile(_rec(), client=_org_client(other))
+    assert src is None and text is None
 
 
 # --- steps 2-3: the draft loop ------------------------------------------

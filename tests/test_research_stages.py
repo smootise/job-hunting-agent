@@ -66,10 +66,25 @@ def _search_client():
         lambda r: httpx.Response(200, json={"results": [{"title": "ACME", "url": "https://acme.fr", "content": "AI"}]})))
 
 
-def _fetch_client():
-    return httpx.Client(transport=httpx.MockTransport(
-        lambda r: httpx.Response(200, text="<html><body>ACME builds AI workflow automation, ~200 employees.</body></html>",
-                                 headers={"content-type": "text/html"})))
+_ORG_HIT = {
+    "name": "ACME", "slug": "acme", "nb_employees": 200,
+    "size": {"en": "Between 50 and 250 employees"},
+    "sectors_name": {"en": [{"Tech": "Software"}]},
+    "offices": [{"city": "Paris", "state": "Ile-de-France", "is_headquarter": True}],
+}
+
+
+def _fetch_client(org_hit=_ORG_HIT):
+    """Serves both roles the stage's fetch client now plays: the WTTJ
+    organizations Algolia POST (JSON) and the agent's fetch_page GETs (HTML)."""
+    def handler(request):
+        if "algolia.net" in str(request.url):
+            hits = [org_hit] if org_hit else []
+            return httpx.Response(200, json={"results": [{"hits": hits}]})
+        return httpx.Response(200, text="<html><body>ACME builds AI workflow automation, ~200 employees.</body></html>",
+                              headers={"content-type": "text/html"})
+
+    return httpx.Client(transport=httpx.MockTransport(handler))
 
 
 # --- company research ----------------------------------------------------
@@ -93,28 +108,16 @@ def test_research_company_persists_brief(db_path):
     assert "AI workflow automation" in row["company_brief"]
 
 
-def _fetch_client_wttj_403():
-    """Fetch client that 403s the WTTJ company page (the real Doctolib case)."""
-    def handler(request):
-        if "welcometothejungle.com" in str(request.url):
-            return httpx.Response(403, text="Forbidden")
-        return httpx.Response(200, text="<html><body>ACME builds AI workflow automation.</body></html>",
-                              headers={"content-type": "text/html"})
-
-    return httpx.Client(transport=httpx.MockTransport(handler))
-
-
-def test_brief_survives_when_wttj_403s(db_path):
-    # Regression for the Doctolib smoke run: WTTJ profile 403s, agent searches but
-    # the description + snippets are still evidence, so grounding keeps the brief
-    # instead of nulling everything to needs_review.
+def test_brief_survives_without_wttj_profile(db_path):
+    # When the WTTJ org lookup returns no hit, the agent's search + the job
+    # description are still evidence, so grounding keeps the brief instead of
+    # nulling everything to needs_review.
     _seed(db_path, _wttj_job(description="A Product Manager role at an AI workflow automation company, ~200 employees."))
-    # Grounding keeps the summary (supported by the description/snippets).
     grounded = ('{"summary": "AI workflow automation", "product": null, "culture": null, '
                 '"size_signal": "~200 employees", "ai_usage": null, "sources": [], "confidence": "low"}')
     s = research_company.run_research_company(
         db_path=db_path, _generate=_gen([_DRAFT, grounded]),
-        _search_client=_search_client(), _fetch_client=_fetch_client_wttj_403())
+        _search_client=_search_client(), _fetch_client=_fetch_client(org_hit=None))
     assert s.briefed == 1 and s.needs_review == 0 and s.from_wttj == 0  # no WTTJ profile, still briefed
     conn = db.connect(db_path)
     row = conn.execute("SELECT company_brief FROM jobs").fetchone()

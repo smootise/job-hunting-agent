@@ -63,13 +63,13 @@ def main() -> None:
     evidence = rc._Evidence()
     tools_map = rc._build_tools(searxng, search_client, fetch_client, cache, evidence)
 
-    def _fetch(url, *, policy, cache):
-        return tools.fetch_page(url, policy=policy, client=fetch_client, cache=cache)
-
-    print("Step 1: deterministic WTTJ profile fetch...")
-    wttj_url, wttj_text = company_agent.fetch_wttj_profile(record, fetch=_fetch, cache=cache)
-    print(f"  profile url: {wttj_url}")
-    print(f"  profile text: {'captured (' + str(len(wttj_text)) + ' chars)' if wttj_text else 'none (agent works from search)'}\n")
+    print("Step 1: deterministic WTTJ company profile (organizations index)...")
+    wttj_src, wttj_text = company_agent.fetch_wttj_profile(record, client=fetch_client)
+    if wttj_text:
+        print(f"  source: {wttj_src}")
+        print("  profile:\n    " + wttj_text.replace("\n", "\n    ") + "\n")
+    else:
+        print("  none (agent works from search)\n")
 
     print("Step 2-3: agent drafts the brief (calls the local model)...")
     draft = company_agent.research_company(record, tools_map=tools_map, wttj_text=wttj_text)

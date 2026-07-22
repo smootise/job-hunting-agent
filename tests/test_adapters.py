@@ -80,6 +80,52 @@ def test_ft_recovery_rejects_role_and_marker_words():
         assert france_travail._looks_like_company(good), good
 
 
+# --- WTTJ organizations index (company profile) --------------------------
+
+import httpx  # noqa: E402
+
+
+def _org_transport(hit):
+    return httpx.Client(transport=httpx.MockTransport(
+        lambda r: httpx.Response(200, json={"results": [{"hits": [hit] if hit else []}]})))
+
+
+def test_wttj_fetch_organization_parses_structured_fields():
+    hit = {
+        "name": "Doctolib", "slug": "doctolib", "nb_employees": 3000,
+        "size": {"en": "> 2,000 employees", "fr": "> 2000 salariés"},
+        "sectors_name": {"en": [{"Tech": "Software"}, {"Health": "Health"}]},
+        "tools_name": [{"backend": "Python"}, {"frontend": "React JS"}],
+        "offices": [{"city": "Levallois-Perret", "state": "Ile-de-France", "is_headquarter": True}],
+        "labels": ["bcorp"],
+    }
+    p = wttj.fetch_organization("Doctolib", slug="doctolib", client=_org_transport(hit))
+    assert p is not None
+    assert p.nb_employees == 3000 and p.size_label == "> 2,000 employees"
+    assert p.sectors == ["Software", "Health"]
+    assert p.tools == ["Python", "React JS"]
+    assert p.hq_city == "Levallois-Perret" and p.hq_state == "Ile-de-France"
+    assert p.labels == ["bcorp"]
+
+
+def test_wttj_fetch_organization_slug_guard_rejects_mismatch():
+    hit = {"name": "Other Co", "slug": "other-co", "nb_employees": 10}
+    assert wttj.fetch_organization("Doctolib", slug="doctolib", client=_org_transport(hit)) is None
+
+
+def test_wttj_fetch_organization_none_on_no_hit_or_blank():
+    assert wttj.fetch_organization("Whoever", client=_org_transport(None)) is None
+    assert wttj.fetch_organization("", client=_org_transport({"name": "X"})) is None
+
+
+def test_wttj_fetch_organization_failsoft_on_error():
+    def boom(request):
+        raise httpx.ConnectError("down")
+
+    client = httpx.Client(transport=httpx.MockTransport(boom))
+    assert wttj.fetch_organization("Doctolib", client=client) is None
+
+
 def test_linkedin_parse_native_alert(fixtures_dir):
     raw = (fixtures_dir / "linkedin_alert_synthetic.eml").read_bytes()
     records = linkedin_email.parse_alert_email(raw)

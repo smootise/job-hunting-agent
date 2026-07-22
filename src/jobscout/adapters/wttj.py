@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import urllib.parse
+from dataclasses import dataclass
 
 import httpx
 
@@ -35,6 +36,12 @@ from jobscout.models import JobRecord
 
 _ALGOLIA_URL = "https://csekhvms53-dsn.algolia.net/1/indexes/*/queries"
 _JOBS_INDEX = "wk_cms_jobs_production"
+# The companion company/organization index on the SAME public Algolia app. It
+# returns structured company data (headcount, size band, sectors, HQ office,
+# tools) as JSON — the clean alternative to fetching the WTTJ company *page*,
+# which sits behind an AWS WAF JS challenge (unsolvable without a headless
+# browser). Same search key, same Referer requirement as the jobs index.
+_ORGS_INDEX = "wk_cms_organizations_production"
 
 # Public, search-only credentials shipped in the WTTJ frontend. Safe to inline
 # (not a secret); see module docstring on rotation.
@@ -196,3 +203,121 @@ def _format_salary(hit: dict) -> str | None:
     else:
         span = str(lo or hi)
     return f"{span} {currency} {period}".strip()
+
+
+# ----------------------------------------------------------------------------
+# Company/organization lookup (the WTTJ company-profile source)
+# ----------------------------------------------------------------------------
+#
+# WTTJ's company *page* is behind an AWS WAF JS challenge, so we take the
+# structured data from the organizations Algolia index instead (same public
+# key). This is the deterministic "step 1" seed for the Phase 3 company brief:
+# facts, not prose, so no grounding is needed for these fields.
+
+
+@dataclass(frozen=True)
+class CompanyProfile:
+    """Structured company facts from WTTJ's organizations index.
+
+    Every field is optional — WTTJ populates them unevenly. ``slug`` lets the
+    caller confirm it matched the right company (query is full-text, so a name
+    like "Alan" could in principle return a near-namesake)."""
+
+    name: str
+    slug: str | None
+    nb_employees: int | None
+    size_label: str | None       # e.g. "Between 50 and 250 employees"
+    sectors: list[str]           # e.g. ["Software", "SaaS / Cloud Services"]
+    tools: list[str]             # tech stack, e.g. ["Python", "React JS"]
+    hq_city: str | None
+    hq_state: str | None         # region, e.g. "Ile-de-France"
+    website: str | None
+    labels: list[str]            # e.g. ["bcorp"]
+
+
+def fetch_organization(
+    name: str,
+    *,
+    slug: str | None = None,
+    client: httpx.Client | None = None,
+) -> CompanyProfile | None:
+    """Look up a company in WTTJ's organizations index; return its profile or None.
+
+    Queries by ``name`` (Algolia full-text). When ``slug`` is given (recovered
+    from the offer URL), we require the top hit's slug to match it — a cheap guard
+    against returning a wrong near-namesake company. Fail-soft: any transport/
+    parse error or no hit yields ``None`` (the caller then works without the WTTJ
+    seed). ``client`` is injectable for offline tests.
+    """
+    if not name or not name.strip():
+        return None
+
+    owns_client = client is None
+    client = client or httpx.Client(timeout=20.0)
+    try:
+        body = {"requests": [{
+            "indexName": _ORGS_INDEX,
+            "params": f"query={urllib.parse.quote(name.strip())}&hitsPerPage=1",
+        }]}
+        resp = client.post(
+            _ALGOLIA_URL,
+            params={"x-algolia-application-id": _APP_ID, "x-algolia-api-key": _API_KEY,
+                    "x-algolia-agent": "jobscout"},
+            headers={"Content-Type": "application/json", "Referer": _REFERER},
+            json=body,
+        )
+        resp.raise_for_status()
+        hits = resp.json()["results"][0].get("hits") or []
+    except (httpx.HTTPError, KeyError, IndexError, ValueError):
+        return None
+    finally:
+        if owns_client:
+            client.close()
+
+    if not hits:
+        return None
+    hit = hits[0]
+    if slug and hit.get("slug") and hit["slug"] != slug:
+        return None  # matched a different company — don't trust it.
+    return _parse_organization(hit)
+
+
+def _parse_organization(hit: dict) -> CompanyProfile:
+    """Map an organizations-index hit to a ``CompanyProfile`` (English labels)."""
+    size = hit.get("size") or {}
+    hq = next(
+        (o for o in (hit.get("offices") or []) if o.get("is_headquarter")),
+        None,
+    ) or (hit.get("offices") or [None])[0] or {}
+    return CompanyProfile(
+        name=hit.get("name") or "",
+        slug=hit.get("slug"),
+        nb_employees=hit.get("nb_employees") if isinstance(hit.get("nb_employees"), int) else None,
+        size_label=size.get("en") if isinstance(size, dict) else None,
+        sectors=_flatten_named(hit.get("sectors_name")),
+        tools=_flatten_named(hit.get("tools_name")),
+        hq_city=hq.get("city"),
+        hq_state=hq.get("state"),
+        website=(hit.get("website") or {}).get("reference") if isinstance(hit.get("website"), dict) else None,
+        labels=[str(x) for x in (hit.get("labels") or []) if x],
+    )
+
+
+def _flatten_named(value) -> list[str]:
+    """Flatten WTTJ's ``{lang: [{category: label}, …]}`` shape to English labels.
+
+    ``sectors_name``/``tools_name`` are localized dicts of category→label pairs.
+    We take the English list and keep the leaf labels ("Software", "Python"),
+    de-duplicated in order. Tolerant of the plain-list form too."""
+    if isinstance(value, dict):
+        items = value.get("en") or next(iter(value.values()), [])
+    elif isinstance(value, list):
+        items = value
+    else:
+        return []
+    out: list[str] = []
+    for item in items:
+        label = list(item.values())[0] if isinstance(item, dict) and item else (item if isinstance(item, str) else None)
+        if label and label not in out:
+            out.append(str(label))
+    return out

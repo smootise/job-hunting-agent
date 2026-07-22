@@ -190,12 +190,10 @@ def _research_row(
         evidence = _Evidence()
         tools_map = _build_tools(searxng, search_client, fetch_client, cache, evidence)
 
-        # Step 1 — deterministic WTTJ profile (highest signal, no LLM loop).
-        # ``fetch_wttj_profile`` calls ``fetch(url, policy=…, cache=…)``; bind the
-        # client here so it hits the network with the shared per-run cache.
-        def _fetch(url, *, policy, cache):
-            return tools.fetch_page(url, policy=policy, client=fetch_client, cache=cache)
-        wttj_url, wttj_text = company_agent.fetch_wttj_profile(record, fetch=_fetch, cache=cache)
+        # Step 1 — deterministic WTTJ company profile via the organizations
+        # Algolia index (structured JSON; no LLM, no WAF-walled HTML fetch). The
+        # shared HTTP client is reused for the Algolia POST.
+        wttj_src, wttj_text = company_agent.fetch_wttj_profile(record, client=fetch_client)
         if wttj_text:
             summary.from_wttj += 1
 
