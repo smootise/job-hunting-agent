@@ -84,25 +84,45 @@ Runs on **every** passed/needs_review offer (company context sharpens the
 culture/size/AI scoring criteria the scorer otherwise judges from the posting
 alone). Four steps, cheapest-and-most-trusted first:
 
-1. **Deterministic WTTJ profile** — no LLM, no injection loop. For a WTTJ offer we
-   recover the org slug from the stored job URL (`…/companies/<slug>/jobs/…`) and
-   fetch the public company page as plain text. Highest-signal source, kept out of
-   the model's tool loop.
-2. **Agent gap-fill** — the shared loop (`web_search` + `fetch_page`) gathers
-   what the profile didn't: product, culture, size, AI usage, from the company
-   site + web.
+1. **Deterministic WTTJ profile** — no LLM, no injection loop. We look the company
+   up in WTTJ's **organizations Algolia index** (`wk_cms_organizations_production`)
+   via the same public search key the ingest adapter uses
+   (`adapters/wttj.fetch_organization`), keyed by the company name + the org slug
+   parsed from the offer URL (a slug guard rejects a near-namesake). It returns
+   **structured facts** — headcount, size band, sectors, tech stack, HQ office +
+   region, labels — rendered as compact trusted seed text. *Why the index and not
+   the company page:* the WTTJ company **page** sits behind an AWS WAF JS challenge
+   (returns `202` + a `challenge.js`) that isn't solvable without a headless
+   browser; the index gives better data (structured, not a JS-rendered shell) with
+   no challenge. These facts also stand as their own **grounding source**, so a
+   WTTJ-stated headcount/sector survives the grounding pass (below).
+2. **Agent gap-fill** — the WTTJ facts are *partial* (size/sectors/tech/HQ only),
+   so the agent is told it **must still** `web_search` + `fetch_page` for what they
+   don't cover: what the company does, product, culture, AI usage — from the
+   company site + web. (Without that nudge, a strong seed made the model skip
+   researching and emit a thin brief.)
 3. **Draft brief** — the loop's final answer, a JSON brief
    `{summary, product, culture, size_signal, ai_usage, sources[], confidence}`.
-4. **Grounding-verification pass** — a second, zero-tool model call: given the
-   draft + the fetched source texts, it **strips any claim the sources don't
-   support**, keeps the grounded remainder, lowers confidence. If nothing
-   survives → the brief is flagged `needs_review` and excluded from scoring
-   context. This is the owner's "quality over speed" gate — a concrete
-   fact-grounding check, not a vague "does this look fine?".
+4. **Grounding-verification pass** — a second, zero-tool model call. It grounds
+   the draft against **all the evidence we actually gathered**: the job
+   description, the WTTJ facts, the pages the agent fetched, and the search
+   snippets. It **strips any claim those sources don't support**, keeps the
+   grounded remainder, lowers confidence. `needs_review` means a genuine **total
+   absence of evidence** (no description, no WTTJ, no web) or that nothing
+   survived — *not* that one source (e.g. WTTJ) was missing; a brief thrives on
+   whatever evidence exists. This is the owner's "quality over speed" gate — a
+   concrete fact-grounding check, not a vague "does this look fine?".
 
 Stored as a JSON blob in the `company_brief` column (+ `company_researched_at`
 stamp), like `commute_strategies`. It feeds the scorer as **advisory context**
 only (see below) — never a hard gate.
+
+**Anonymous offers.** Some France Travail offers post without a company name
+(the source omits it). The FT adapter makes a conservative, high-precision
+attempt to recover the name from the offer text (`recover_company`); when it
+can't, the company stage **skips** research for that row (no agent run, no
+searching on an empty string) and stamps it so it isn't retried. The offer is
+still filtered/enriched/scored on its own description.
 
 ## How the brief reaches the scorer (advisory only)
 
