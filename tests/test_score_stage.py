@@ -280,6 +280,139 @@ def test_dry_run_writes_nothing(tmp_path):
     assert _row(db_path, "1")["score_status"] is None  # but not written
 
 
+def _set_commute(db_path, external_id, minutes):
+    """Update just the commute on an already-enriched row (simulate a re-enrich)."""
+    conn = db.connect(db_path)
+    rid = conn.execute("SELECT id FROM jobs WHERE external_id=?", (external_id,)).fetchone()["id"]
+    db.record_enrichment(
+        conn, rid, address="somewhere", lat=48.8, lon=2.3,
+        address_source="agent", address_confidence="medium",
+        commute_minutes=minutes, commute_mode="no_bike", commute_strategies_json="{}",
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_ids_scores_only_targeted_rows(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    _seed(db_path, [_job("1"), _job("2"), _job("3")])
+    conn = db.connect(db_path)
+    id2 = conn.execute("SELECT id FROM jobs WHERE external_id='2'").fetchone()["id"]
+    conn.close()
+    summary = score_stage.run_score(
+        prefs_path=prefs_path(tmp_path), db_path=db_path, ids=[id2],
+        _generate=stub_generate(valid_json()),
+    )
+    assert summary.considered == 1 and summary.scored == 1
+    assert _row(db_path, "2")["score_status"] == "scored"
+    assert _row(db_path, "1")["score_status"] is None  # untargeted, untouched
+    assert _row(db_path, "3")["score_status"] is None
+
+
+def test_ids_overrides_unscored_gate(tmp_path):
+    # An already-scored id is re-scored when named explicitly (no --rescore needed).
+    db_path = tmp_path / "jobs.db"
+    _seed(db_path, [_job("1")])
+    p = prefs_path(tmp_path)
+    score_stage.run_score(prefs_path=p, db_path=db_path, _generate=stub_generate(valid_json()))
+    conn = db.connect(db_path)
+    id1 = conn.execute("SELECT id FROM jobs WHERE external_id='1'").fetchone()["id"]
+    conn.close()
+    again = score_stage.run_score(
+        prefs_path=p, db_path=db_path, ids=[id1],
+        _generate=stub_generate(valid_json(criteria_scores={n: 2 for n in QUAL_NAMES})),
+    )
+    assert again.considered == 1 and again.scored == 1
+    assert _row(db_path, "1")["score_total"] < 50
+
+
+def test_ids_ineligible_id_excluded(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    _seed(db_path, [_job("1")], status="rejected")
+    conn = db.connect(db_path)
+    id1 = conn.execute("SELECT id FROM jobs WHERE external_id='1'").fetchone()["id"]
+    conn.close()
+    summary = score_stage.run_score(
+        prefs_path=prefs_path(tmp_path), db_path=db_path, ids=[id1],
+        _generate=stub_generate(valid_json()),
+    )
+    assert summary.considered == 0  # rejected id never scored, even when named
+
+
+def test_commute_only_recomputes_without_llm(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    _seed(db_path, [_job("1")], commute_minutes=25.0)
+    p = prefs_path(tmp_path)
+    # Initial full score with a distinctive reasoning we can prove is preserved.
+    score_stage.run_score(
+        prefs_path=p, db_path=db_path,
+        _generate=stub_generate(valid_json(reasoning="ORIGINAL REASONING")),
+    )
+    before = json.loads(_row(db_path, "1")["score_json"])
+
+    # Commute worsens dramatically; recompute commute-only with a generate that
+    # would RAISE if called — proving no LLM invocation happens.
+    _set_commute(db_path, "1", 95.0)
+
+    def _boom(*a, **k):
+        raise AssertionError("LLM must not be called in commute-only mode")
+
+    summary = score_stage.run_score(
+        prefs_path=p, db_path=db_path, commute_only=True, _generate=_boom,
+    )
+    assert summary.scored == 1 and summary.skipped == 0
+    after = json.loads(_row(db_path, "1")["score_json"])
+    # Qualitative scores + reasoning preserved verbatim.
+    assert after["reasoning"] == "ORIGINAL REASONING"
+    assert after["criteria_scores"] == before["criteria_scores"]
+    # Commute sub-score dropped (longer commute) → total dropped.
+    assert after["weekly_commute_fit"] < before["weekly_commute_fit"]
+    assert after["total"] < before["total"]
+
+
+def test_commute_only_clears_stale_unknown_flag(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    _seed(db_path, [_job("1")], commute_minutes=None)  # scored with commute unknown
+    p = prefs_path(tmp_path)
+    score_stage.run_score(prefs_path=p, db_path=db_path, _generate=stub_generate(valid_json()))
+    before = json.loads(_row(db_path, "1")["score_json"])
+    assert before["commute_included_in_total"] is False
+    assert any("commute unknown" in f for f in before["red_flags"])
+
+    _set_commute(db_path, "1", 30.0)  # address now resolves
+    score_stage.run_score(prefs_path=p, db_path=db_path, commute_only=True)
+    after = json.loads(_row(db_path, "1")["score_json"])
+    assert after["commute_included_in_total"] is True
+    assert not any("commute unknown" in f for f in after["red_flags"])  # stale flag gone
+
+
+def test_commute_only_skips_unscored_row(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    _seed(db_path, [_job("1")])  # never scored → no score_json to recompute
+    summary = score_stage.run_score(
+        prefs_path=prefs_path(tmp_path), db_path=db_path, commute_only=True,
+    )
+    assert summary.scored == 0 and summary.skipped == 1
+    assert _row(db_path, "1")["score_status"] is None
+
+
+def test_commute_only_with_ids(tmp_path):
+    db_path = tmp_path / "jobs.db"
+    _seed(db_path, [_job("1"), _job("2")], commute_minutes=25.0)
+    p = prefs_path(tmp_path)
+    score_stage.run_score(prefs_path=p, db_path=db_path, _generate=stub_generate(valid_json()))
+    conn = db.connect(db_path)
+    id1 = conn.execute("SELECT id FROM jobs WHERE external_id='1'").fetchone()["id"]
+    conn.close()
+    _set_commute(db_path, "1", 95.0)
+    _set_commute(db_path, "2", 95.0)
+    before2 = json.loads(_row(db_path, "2")["score_json"])["total"]
+    score_stage.run_score(prefs_path=p, db_path=db_path, commute_only=True, ids=[id1])
+    # Only id1 recomputed; id2 untouched.
+    assert json.loads(_row(db_path, "2")["score_json"])["total"] == before2
+    assert json.loads(_row(db_path, "1")["score_json"])["total"] < before2
+
+
 def test_assumed_cdi_note_reaches_prompt(tmp_path):
     db_path = tmp_path / "jobs.db"
     reasons = json.dumps([{"filter": "contract_type", "outcome": "passed",
