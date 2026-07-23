@@ -32,11 +32,18 @@ def _find_project_root(start: Path) -> Path:
 
 @dataclass(frozen=True)
 class Settings:
-    """Everything the app needs to find its data and bind its socket."""
+    """Everything the app needs to find its data and bind its socket.
+
+    ``env_path`` is the project-root-anchored ``.env`` — the background runner
+    passes it to the stages that need credentials (enrich-commute, research), so
+    a server launched from another directory still finds the real ``.env`` rather
+    than the ``run_*`` CWD-relative default.
+    """
 
     project_root: Path
     db_path: Path
     preferences_path: Path
+    env_path: Path
     host: str = "127.0.0.1"
     port: int = 8020
 
@@ -45,6 +52,7 @@ def resolve_settings(
     *,
     db_path: Path | None = None,
     preferences_path: Path | None = None,
+    env_path: Path | None = None,
     host: str = "127.0.0.1",
     port: int = 8020,
 ) -> Settings:
@@ -52,8 +60,13 @@ def resolve_settings(
 
     Precedence for each path: explicit argument (tests inject a fixture DB) →
     ``JOBSCOUT_DB_PATH`` / ``JOBSCOUT_PREFERENCES_PATH`` env var → the
-    project-root-anchored default. ``host`` defaults to loopback; the ``serve``
-    command never binds ``0.0.0.0`` — this is a single-user local tool.
+    project-root-anchored default. ``host``/``port`` follow the same pattern via
+    ``JOBSCOUT_HOST``/``JOBSCOUT_PORT`` — this matters because ``serve`` runs the
+    *module-level* ``app`` (built by ``create_app()`` with no args), so the CLI
+    hands the chosen port through the environment rather than as an argument. The
+    port must reach ``Settings`` or the same-origin guard would reject requests to
+    a non-default port. ``host`` defaults to loopback; ``serve`` never binds
+    ``0.0.0.0`` — this is a single-user local tool.
     """
     root = _find_project_root(Path(__file__).resolve())
 
@@ -67,12 +80,17 @@ def resolve_settings(
         or _env_path("JOBSCOUT_PREFERENCES_PATH")
         or root / "preferences.yaml"
     )
+    resolved_env = env_path or _env_path("JOBSCOUT_ENV_PATH") or root / ".env"
+    resolved_host = os.environ.get("JOBSCOUT_HOST", host)
+    port_env = os.environ.get("JOBSCOUT_PORT")
+    resolved_port = int(port_env) if port_env else port
     return Settings(
         project_root=root,
         db_path=resolved_db,
         preferences_path=resolved_prefs,
-        host=host,
-        port=port,
+        env_path=resolved_env,
+        host=resolved_host,
+        port=resolved_port,
     )
 
 

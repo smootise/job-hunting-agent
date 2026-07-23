@@ -305,11 +305,20 @@ def _run_serve(args: argparse.Namespace) -> None:
     Windows and POSIX alike. A short ``timeout_graceful_shutdown`` guarantees the
     process actually exits instead of hanging on a slow connection.
     """
+    import os
     import signal
 
     import uvicorn
 
     from jobscout.web.settings import resolve_settings
+
+    # The server runs the module-level ``jobscout.web.app:app`` (import string),
+    # which builds its Settings from the environment — so the chosen host/port
+    # must be exported BEFORE that import, or the app's Settings (hence the
+    # same-origin guard) would keep the defaults and reject requests to a
+    # non-default port. resolve_settings() below then reflects the same values.
+    os.environ["JOBSCOUT_HOST"] = args.host
+    os.environ["JOBSCOUT_PORT"] = str(args.port)
 
     settings = resolve_settings(host=args.host, port=args.port)
     print(f"Job Scout webapp → http://{args.host}:{args.port}  (db: {settings.db_path})")

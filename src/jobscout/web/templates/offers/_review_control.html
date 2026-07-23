@@ -1,0 +1,26 @@
+{# The owner's review control for one offer — POSTs to set disposition + notes,
+   and swaps ITSELF back in (hx-target="this", outerHTML). Shared by the detail
+   page (initial render via include) and the review POST response. #}
+<form id="review-control"
+      hx-post="/offers/{{ job.id }}/review"
+      hx-target="this"
+      hx-swap="outerHTML">
+  <div class="review-row">
+    <label>Status
+      <select name="disposition">
+        <option value="to_review"      {% if job.review.disposition == 'to_review' %}selected{% endif %}>To review</option>
+        <option value="applied"        {% if job.review.disposition == 'applied' %}selected{% endif %}>Applied</option>
+        <option value="not_interested" {% if job.review.disposition == 'not_interested' %}selected{% endif %}>Not interested</option>
+      </select>
+    </label>
+    {% if job.review.disposition == 'applied' and job.review.applied_at %}
+      <span class="chip">applied {{ job.review.applied_at | reltime }}</span>
+    {% elif not job.review.disposition %}
+      <span class="chip">unreviewed</span>
+    {% endif %}
+  </div>
+  <label class="review-notes">Notes
+    <textarea name="notes" rows="3" placeholder="Contact, why you passed, follow-up date…">{{ job.review.notes or '' }}</textarea>
+  </label>
+  <button type="submit">Save review</button>
+</form>
