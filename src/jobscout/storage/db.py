@@ -109,6 +109,22 @@ CREATE TABLE IF NOT EXISTS runs (
     source_counts_json TEXT,
     dry_run            INTEGER NOT NULL DEFAULT 0
 );
+
+-- The owner's OWN application-tracking state, one row per offer they've acted on
+-- (webapp V2). Deliberately a SEPARATE table, not columns on `jobs`: `jobs` is
+-- pipeline-owned (ingest/filter/score write it), whereas this is human-owned and
+-- must never entangle with the automated stages. `disposition` is one of
+-- 'to_review' | 'applied' | 'not_interested' — the domain is enforced in Python
+-- (`upsert_review`), consistent with how `filter_status`/`score_status` are
+-- validated by the pipeline, not by a SQL CHECK. `applied_at` is stamped once,
+-- when an offer is first marked 'applied', and preserved across later edits.
+CREATE TABLE IF NOT EXISTS offer_review (
+    job_id      INTEGER PRIMARY KEY REFERENCES jobs(id),
+    disposition TEXT,
+    applied_at  TEXT,
+    notes       TEXT,
+    updated_at  TEXT
+);
 """
 
 
@@ -118,11 +134,18 @@ def connect(path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
     Idempotent: safe to call every run. Uses `CREATE TABLE IF NOT EXISTS`, so
     an existing DB is left as-is. Enables WAL (better concurrent-read
     behavior) and a Row factory so callers get dict-like rows.
+
+    ``busy_timeout`` is set so a connection waits (up to 5s) for a lock rather
+    than failing immediately with ``SQLITE_BUSY``. WAL already lets readers and
+    one writer coexist; this covers the brief window where two *writers* overlap
+    — e.g. the webapp's background pipeline runner committing a stage while a
+    request handler writes a review row.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA foreign_keys=ON")
     init_schema(conn)
     return conn
@@ -565,6 +588,67 @@ def record_score(
         "UPDATE jobs SET score_total = ?, score_status = ?, score_json = ?, "
         "scored_at = ? WHERE id = ?",
         (score_total, score_status, score_json, _utcnow(), job_id),
+    )
+
+
+# --------------------------------------------------------------------------
+# Webapp V2 — the owner's own application-tracking state (offer_review)
+# --------------------------------------------------------------------------
+
+# The valid dispositions. Enforced here (Python) rather than a SQL CHECK, so the
+# domain lives next to the writer — same choice as filter_status/score_status.
+REVIEW_DISPOSITIONS = ("to_review", "applied", "not_interested")
+
+
+def upsert_review(
+    conn: sqlite3.Connection,
+    job_id: int,
+    *,
+    disposition: str,
+    notes: str | None = None,
+) -> None:
+    """Insert or update one offer's human application-tracking row.
+
+    Unlike the ``record_*`` helpers (which UPDATE a column on an existing ``jobs``
+    row), this targets the fresh ``offer_review`` table, so it's an upsert:
+    ``INSERT ... ON CONFLICT(job_id) DO UPDATE``. The caller commits (same
+    contract as ``record_score`` — no internal commit).
+
+    ``applied_at`` is a *record* of when the offer was first marked applied, so it
+    is **preserved** across later edits: we read any existing row first and keep
+    its ``applied_at`` when the offer is (still) applied. It's stamped fresh only
+    on the transition *into* applied from no prior stamp, and cleared when the
+    disposition is not applied. This means editing the notes of an already-applied
+    offer never moves its applied date.
+
+    Raises ``ValueError`` for an unknown ``disposition`` (guards the caller/route).
+    No home/location data is involved — this table holds only the owner's own
+    review state.
+    """
+    if disposition not in REVIEW_DISPOSITIONS:
+        raise ValueError(
+            f"unknown disposition {disposition!r}; expected one of {REVIEW_DISPOSITIONS}"
+        )
+
+    now = _utcnow()
+    if disposition == "applied":
+        existing = conn.execute(
+            "SELECT applied_at FROM offer_review WHERE job_id = ?", (job_id,)
+        ).fetchone()
+        prior = existing["applied_at"] if existing is not None else None
+        applied_at = prior or now  # keep the original stamp; set one if absent
+    else:
+        applied_at = None  # not applied → no applied date
+
+    conn.execute(
+        "INSERT INTO offer_review (job_id, disposition, applied_at, notes, updated_at) "
+        "VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(job_id) DO UPDATE SET "
+        "disposition = excluded.disposition, "
+        "applied_at = excluded.applied_at, "
+        "notes = excluded.notes, "
+        "updated_at = excluded.updated_at",
+        (job_id, disposition, applied_at, notes, now),
     )
 
 
