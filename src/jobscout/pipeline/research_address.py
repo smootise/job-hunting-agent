@@ -64,6 +64,7 @@ def run_research_address(
     model: str = DEFAULT_MODEL,
     limit: int | None = None,
     redo: bool = False,
+    ids: list[int] | None = None,
     dry_run: bool = False,
     on_progress: ProgressFn | None = None,
     _generate: address_agent.loop.GenerateFn | None = None,
@@ -103,7 +104,7 @@ def run_research_address(
         # Pass 1 (cheap): run resolve_address over every candidate and keep only
         # the ones it can't place. resolve_address stays the sole authority on
         # address quality. Pass 2: run the agent on up to `limit` of those.
-        candidates = db.select_jobs_to_research_address(conn, redo=redo)
+        candidates = db.select_jobs_to_research_address(conn, redo=redo, ids=ids)
         summary.considered = len(candidates)
         worklist = [row for row in candidates if _needs_agent(row, geo_client)]
         summary.needed_agent = len(worklist)

@@ -77,6 +77,7 @@ def run_research_company(
     model: str = DEFAULT_MODEL,
     limit: int | None = None,
     redo: bool = False,
+    ids: list[int] | None = None,
     dry_run: bool = False,
     on_progress: ProgressFn | None = None,
     _generate: company_agent.loop.GenerateFn | None = None,
@@ -104,7 +105,7 @@ def run_research_company(
         searxng = config.searxng_url(env)  # fail loud if unset.
         cache = tools.FetchCache()  # shared across rows: same company page fetched once.
 
-        rows = db.select_jobs_to_research_company(conn, limit=limit, redo=redo)
+        rows = db.select_jobs_to_research_company(conn, limit=limit, redo=redo, ids=ids)
         summary.considered = len(rows)
         for i, row in enumerate(rows, 1):
             _research_row(

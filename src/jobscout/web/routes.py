@@ -218,20 +218,33 @@ def trigger_run(
     )
 
 
+# Stages that can run on a single offer (everything except ingest, which fetches
+# new offers from sources and has no per-offer form).
+_PER_OFFER_STAGES = frozenset(runner_module.PIPELINE_ORDER) - {"ingest"} | {"score-commute-only"}
+
+
 @router.post(
-    "/offers/{job_id}/rescore",
+    "/offers/{job_id}/runs/{stage}",
     response_class=HTMLResponse,
     dependencies=[Depends(require_local_origin)],
 )
-def trigger_rescore(
-    request: Request, job_id: int, conn: sqlite3.Connection = Depends(get_conn)
+def trigger_offer_run(
+    request: Request, job_id: int, stage: str, conn: sqlite3.Connection = Depends(get_conn)
 ) -> HTMLResponse:
-    """Enqueue a targeted re-score (``score --ids <job_id>``) for one offer."""
+    """Enqueue a single stage on ONE offer (``<stage> --ids <job_id>``).
+
+    Forces the stage past its 'already done' gate so a deliberate re-run works
+    (re-search an address, re-route a commute after a prefs change). The stage's
+    own eligibility gate still applies — a rejected offer selects nothing for the
+    pipeline stages and the run is a harmless no-op.
+    """
+    if stage not in _PER_OFFER_STAGES:
+        raise HTTPException(status_code=404, detail=f"no per-offer stage {stage!r}")
     if queries.get_job(conn, job_id) is None:
         raise HTTPException(status_code=404, detail="offer not found")
     runner = request.app.state.runner
     try:
-        runner.enqueue("rescore", job_id=job_id)
+        runner.enqueue(stage, job_id=job_id)
     except RunnerBusy:
         pass
     return _templates(request).TemplateResponse(

@@ -22,9 +22,34 @@
 <section class="block card">
   <h2 style="margin-top:0">My review</h2>
   {% include "offers/_review_control.html" %}
-  <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0">
-  <div class="run-line">
-    <button hx-post="/offers/{{ job.id }}/rescore" hx-target="#run-status" hx-swap="outerHTML">Rescore this offer</button>
+</section>
+
+{# ---- Run a step on this offer (V2) -------------------------------- #}
+{% set rejected = job.filter_status == 'rejected' %}
+<section class="block card">
+  <h2 style="margin-top:0">Run a step on this offer</h2>
+  <p class="section-note">Re-run any applicable stage for just this offer (forces past the "already done" state).</p>
+  <div class="run-panel">
+    {# filter always shows — re-filtering can un-reject after a prefs change. #}
+    <button hx-post="/offers/{{ job.id }}/runs/filter" hx-target="#run-status" hx-swap="outerHTML">re-filter</button>
+
+    {# enrich-linkedin only for LinkedIn offers (source-gated). Expensive → confirm. #}
+    {% if job.source == 'linkedin_email' %}
+    <button hx-post="/offers/{{ job.id }}/runs/enrich-linkedin" hx-target="#run-status" hx-swap="outerHTML"
+            hx-confirm="Re-fetch this LinkedIn offer's description? (network call)">enrich LinkedIn</button>
+    {% endif %}
+
+    {# Pipeline stages: hidden on rejected offers (they'd no-op — eligibility gate). #}
+    {% if not rejected %}
+      <button hx-post="/offers/{{ job.id }}/runs/research-address" hx-target="#run-status" hx-swap="outerHTML"
+              hx-confirm="Run the address-research agent on this offer? (LLM + web search)">research address</button>
+      <button hx-post="/offers/{{ job.id }}/runs/research-company" hx-target="#run-status" hx-swap="outerHTML"
+              hx-confirm="Re-research this offer's company? (LLM + web search)">research company</button>
+      <button hx-post="/offers/{{ job.id }}/runs/enrich-commute" hx-target="#run-status" hx-swap="outerHTML"
+              hx-confirm="Re-resolve address + route commute for this offer? (network calls)">enrich commute</button>
+      <button hx-post="/offers/{{ job.id }}/runs/score" hx-target="#run-status" hx-swap="outerHTML">rescore</button>
+      <button hx-post="/offers/{{ job.id }}/runs/score-commute-only" hx-target="#run-status" hx-swap="outerHTML">rescore (commute-only)</button>
+    {% endif %}
   </div>
   {% include "runs/_status.html" %}
 </section>
