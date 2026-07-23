@@ -149,8 +149,10 @@ would only add noise). `--ids` scopes any score run to specific offers.
 sortable/filterable ranked offer list, and a per-offer detail page (verdict, full
 score breakdown, commute detail, company brief + original posting). It also
 **tracks your own hunt** (mark each offer to-review / applied / not-interested +
-notes) and **runs pipeline stages from the UI** (any stage, or the whole
-pipeline, via a background runner with a progress bar).
+notes) and **runs pipeline stages from the UI** — any stage or the whole pipeline
+from the dashboard, or any applicable stage on a single offer from its detail page
+(re-search an address, re-route a commute, rescore) — via a background runner with
+a progress bar.
 
 ```
 uv run jobscout serve                 # → http://127.0.0.1:8020  (Ctrl+C to stop)

@@ -31,7 +31,7 @@ framework in v1 — the loop is readable on purpose.
 | Address-research agent | ✅ Phase 3 | `agents/address_agent.py`, `pipeline/research_address.py` |
 | Company-research agent | ✅ Phase 3 | `agents/company_agent.py`, `pipeline/research_company.py` |
 | Cover-letter agent | ⏳ Phase 3 (next) | — |
-| Webapp (read-only: dashboard / list / detail) | ✅ v1 | `web/`, `storage/{queries,stats}.py` — see `docs/webapp.md` |
+| Webapp (dashboard / list / detail; + tracking & run buttons) | ✅ v1 + v2 | `web/`, `storage/{queries,stats}.py` + `offer_review` in `db.py` — see `docs/webapp.md` |
 | Digest / scheduling / ops | ⏳ Phase 4 | — |
 
 ## Package layout
@@ -42,9 +42,12 @@ src/jobscout/
   normalize.py       shared language / dedupe-key / contract helpers
   config.py          preferences.yaml + .env loaders, credential getters
   adapters/          one module per source (wttj, france_travail, linkedin_email)
-  storage/db.py      SQLite schema, idempotent upsert, dedupe, run ledger
-  storage/queries.py display reads for the webapp (get_job, list_jobs + sort guard)
-  storage/stats.py   dashboard aggregates (funnel + pending counts, run ledger)
+  storage/db.py      SQLite schema, idempotent upsert, dedupe, run ledger,
+                     offer_review table + upsert_review (webapp v2 tracking)
+  storage/queries.py display reads for the webapp (get_job, list_jobs + sort guard
+                     + offer_review LEFT JOIN / disposition filter)
+  storage/stats.py   dashboard aggregates (funnel + pending counts, run ledger,
+                     review_stats)
   pipeline/ingest.py       ingest orchestration (fail-soft per source, dry-run)
   pipeline/filters.py      pure hard-filter logic + FilterVerdict
   pipeline/salary.py       free-text salary → annual-gross EUR range parser
@@ -66,7 +69,10 @@ src/jobscout/
   agents/company_agent.py   company brief (WTTJ profile → agent → grounding pass)
   pipeline/research_address.py  address-agent orchestration (tail only, fail-soft)
   pipeline/research_company.py  company-research orchestration (all offers)
-  web/               read-only FastAPI + HTMX webapp (dashboard/list/detail)
+  web/               FastAPI + HTMX webapp: read views (v1) + application
+                     tracking & run-from-UI buttons (v2). runner.py = the
+                     single-worker background pipeline runner; security.py =
+                     same-origin guard for write routes.
   cli.py             `jobscout` entry point
   llm/client.py      thin Ollama wrapper with full-interaction logging
 ```
@@ -131,22 +137,32 @@ registry returns an HQ address (a weak fit for the bare-"Paris" worklist), so
 they're deferred as an optional future pre-filter; the WTTJ profile instead feeds
 the *company* brief deterministically.
 
-**Webapp v1 (shipped, alongside Phase 3).** A local, **read-only** FastAPI + HTMX
-UI (`jobscout serve`) over `data/jobs.db`: a stats dashboard, a ranked
-offer list sortable by the overall score or any single rubric criterion, and a
-per-offer detail page. It's mounted on two new read layers —
-`storage/queries.py` (display reads, allowlist-guarded sorting) and
-`storage/stats.py` (dashboard counts that mirror the pipeline worklists) — and
-triggers no stage, writes nothing, and makes no external call. Application
-tracking, run-CLI buttons, and a company-location map are designed-in but
-deferred (V2). Full detail in `docs/webapp.md`.
+**Webapp (shipped, alongside Phase 3).** A local FastAPI + HTMX UI
+(`jobscout serve`) over `data/jobs.db`, in two layers. **v1 (read):** a stats
+dashboard, a ranked offer list sortable by the overall score or any single rubric
+criterion, and a per-offer detail page — mounted on `storage/queries.py`
+(allowlist-guarded display reads) and `storage/stats.py` (dashboard counts that
+mirror the pipeline worklists). **v2 (writes):** *application tracking* — a
+separate `offer_review` table (human-owned; `upsert_review` preserves the
+original applied date), surfaced as a "My review" dashboard section, a detail-page
+disposition/notes control, and a list filter; and *run-from-UI buttons* — a
+single-worker background runner (`web/runner.py`, started via a lifespan) that
+runs the **same `pipeline.run_*` code** the CLI does, serialized (one SQLite
+writer), with a per-offer progress bar (an additive `on_progress` param on every
+`run_*`). The dashboard runs whole-worklist stages or the whole pipeline
+(halt-on-raise, resume-on-re-press via idempotency); the detail page re-runs any
+applicable stage on **one offer** (`POST /offers/{id}/runs/{stage}`, forcing past
+the done-gate but keeping eligibility gates). All write routes are same-origin
+guarded (`web/security.py`); the runner adds no new external capability and sends
+no email. Full detail in `docs/webapp.md`.
 
-The scorer also gained two targeting flags used by the above and by ad-hoc runs:
-**`score --ids ID ...`** (score only specific offers — the primitive a future
-run-from-UI feature drives) and **`score --commute-only`** (recompute only the
-Python `weekly_commute_fit` + total from the stored breakdown, **no LLM call** —
-folds a changed commute into an already-scored offer without re-rolling the
-model's qualitative judgment). See `docs/scoring.md`.
+The scorer gained two targeting flags the webapp drives (and useful for ad-hoc
+runs): **`score --ids ID ...`** (score only specific offers — the primitive
+generalized across every stage's selector for the per-offer buttons) and
+**`score --commute-only`** (recompute only the Python `weekly_commute_fit` +
+total from the stored breakdown, **no LLM call** — folds a changed commute into
+an already-scored offer without re-rolling the model's qualitative judgment). See
+`docs/scoring.md`.
 
 **Next up:** the cover-letter agent (reuses `agents/loop.py` + `fetch_page` in
 `hard_whitelist` mode + one sandboxed `save_draft`).
