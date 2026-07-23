@@ -56,8 +56,15 @@ def client(tmp_path):
     conn.commit()
     conn.close()
 
-    settings = Settings(project_root=tmp_path, db_path=db_path, preferences_path=_PREFS)
-    return TestClient(create_app(settings)), ids
+    settings = Settings(
+        project_root=tmp_path, db_path=db_path, preferences_path=_PREFS,
+        env_path=tmp_path / ".env",
+    )
+    # Context-manager form runs the lifespan, so app.state.runner exists (the
+    # dashboard/detail routes read runner.snapshot()). The worker thread idles
+    # until something is enqueued, so this is cheap for these read-only tests.
+    with TestClient(create_app(settings)) as tc:
+        yield tc, ids
 
 
 def test_healthz(client):
@@ -116,3 +123,68 @@ def test_offer_detail_404(client):
     r = tc.get("/offers/999999")
     assert r.status_code == 404
     assert "not found" in r.text.lower()
+
+
+# --- V2 write routes ------------------------------------------------------
+
+
+def test_set_review_writes_and_returns_fragment(client):
+    tc, ids = client
+    r = tc.post(f"/offers/{ids['a']}/review", data={"disposition": "applied", "notes": "call"})
+    assert r.status_code == 200
+    assert "<html" not in r.text.lower()  # control fragment, not a full page
+    assert "applied" in r.text
+    # dashboard now counts it
+    assert ">1<" in tc.get("/").text.replace(" ", "")
+
+
+def test_set_review_bad_disposition_400(client):
+    tc, ids = client
+    r = tc.post(f"/offers/{ids['a']}/review", data={"disposition": "bogus"})
+    assert r.status_code == 400
+
+
+def test_set_review_missing_offer_404(client):
+    tc, _ = client
+    r = tc.post("/offers/999999/review", data={"disposition": "applied"})
+    assert r.status_code == 404
+
+
+def test_offers_table_disposition_filter(client):
+    tc, ids = client
+    tc.post(f"/offers/{ids['a']}/review", data={"disposition": "applied"})
+    applied = tc.get("/offers/table?disposition=applied").text
+    assert "Product Manager" in applied  # offer 'a' is a PM titled row
+    unreviewed = tc.get("/offers/table?disposition=__unreviewed__").text
+    # offer 'a' is now reviewed, so BetaCorp (b) is the unreviewed one
+    assert "BetaCorp" in unreviewed
+
+
+def test_run_status_and_trigger(client):
+    tc, _ = client
+    assert tc.get("/runs/status").status_code == 200
+    # a fast, safe stage (commute-only recompute from stored score; no LLM/net)
+    r = tc.post("/runs/score-commute-only")
+    assert r.status_code == 200
+
+
+def test_trigger_unknown_stage_404(client):
+    tc, _ = client
+    assert tc.post("/runs/nonsense").status_code == 404
+
+
+def test_rescore_route(client):
+    tc, ids = client
+    assert tc.post(f"/offers/{ids['a']}/rescore").status_code == 200
+    assert tc.post("/offers/999999/rescore").status_code == 404
+
+
+def test_require_local_origin(client):
+    tc, ids = client
+    # A foreign Origin is refused; no Origin is allowed (default in TestClient).
+    bad = tc.post(
+        f"/offers/{ids['a']}/review",
+        data={"disposition": "applied"},
+        headers={"origin": "http://evil.example"},
+    )
+    assert bad.status_code == 403

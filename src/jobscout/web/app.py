@@ -9,16 +9,22 @@ import path and ``--reload``; ``jobscout serve`` calls the factory the same way.
 
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from jobscout import config
+from jobscout.storage import db
 
 from .routes import router
+from .runner import JobRunner
 from .settings import Settings, resolve_settings
 from .templating import build_templates
+
+logger = logging.getLogger("jobscout.web")
 
 _STATIC_DIR = Path(__file__).parent / "static"
 
@@ -39,11 +45,49 @@ def _load_criteria(preferences_path: Path) -> list[dict]:
     return list(rubric.get("criteria", []) or [])
 
 
+def _stale_run_note(settings: Settings) -> None:
+    """Log (don't touch) any ledger rows left 'running' by a prior hard kill.
+
+    ``finished_at IS NULL`` in the ``runs`` table is an honest record that a run
+    was interrupted; we never rewrite it. The live runner state — not the ledger
+    — is the source of truth for whether a job is running *now* (a phantom row
+    would otherwise read as forever-running). This is informational only.
+    """
+    try:
+        conn = db.connect(settings.db_path)
+        try:
+            n = conn.execute(
+                "SELECT COUNT(*) FROM runs WHERE finished_at IS NULL"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        if n:
+            logger.info("runs ledger has %d interrupted run(s) (history only)", n)
+    except Exception:  # noqa: BLE001 — a startup note must never block boot.
+        pass
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     """Build the app. Pass ``settings`` (e.g. a fixture DB) or resolve defaults."""
     settings = settings or resolve_settings()
 
-    app = FastAPI(title="Job Scout", docs_url=None, redoc_url=None)
+    @asynccontextmanager
+    async def _lifespan(app: FastAPI):
+        # The background pipeline runner lives for the app's lifetime. In-process
+        # + single-worker (see runner.py) — valid because `serve` runs uvicorn
+        # single-worker; do NOT enable --reload/workers>1 for the run buttons.
+        _stale_run_note(settings)
+        runner = JobRunner(settings)
+        runner.start()
+        app.state.runner = runner
+        try:
+            yield
+        finally:
+            runner.stop()
+
+    app = FastAPI(
+        title="Job Scout", docs_url=None, redoc_url=None, lifespan=_lifespan
+    )
 
     criteria = _load_criteria(settings.preferences_path)
     app.state.settings = settings

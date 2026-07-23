@@ -1,0 +1,55 @@
+{# The run-status fragment: a progress bar while a job runs, else the last
+   result. It self-polls (every 2s) ONLY while running, so an idle page stops
+   hitting the server. Swaps itself (outerHTML) so the polling re-arms/stops as
+   the status changes. Source of truth for 'is a run active' is the in-process
+   runner state (not the ledger, which can hold crash phantoms). #}
+<div id="run-status"
+     hx-get="/runs/status"
+     hx-swap="outerHTML"
+     {% if runner_state.status == 'running' %}hx-trigger="every 2s"{% endif %}>
+
+  {% if runner_state.status == 'running' %}
+    <div class="run-line">
+      <span class="badge badge--warn">running</span>
+      <strong>{{ runner_state.stage }}</strong>
+      {% if runner_state.total %}
+        <span class="num">{{ runner_state.done }} / {{ runner_state.total }}</span>
+      {% else %}
+        <span class="num">starting…</span>
+      {% endif %}
+    </div>
+    <div class="meter">
+      <span style="width: {{ (100 * runner_state.done / runner_state.total) if runner_state.total else 0 }}%"></span>
+    </div>
+
+  {% elif runner_state.status == 'failed' %}
+    <div class="run-line">
+      <span class="badge badge--bad">failed</span>
+      <strong>{{ runner_state.stage }}</strong>
+    </div>
+    <p class="section-note">{{ runner_state.error }}</p>
+    <p class="section-note">Re-run to resume — completed stages are skipped.</p>
+
+  {% elif runner_state.status == 'done' %}
+    <div class="run-line">
+      <span class="badge badge--ok">done</span>
+      <strong>{{ runner_state.stage }}</strong>
+    </div>
+    {% if runner_state.summary %}
+      <p class="section-note">
+        {% for k, v in runner_state.summary.items() if v is not mapping %}{{ k }}={{ v }}{% if not loop.last %} · {% endif %}{% endfor %}
+      </p>
+    {% endif %}
+  {% else %}
+    <p class="section-note">Idle — no run in progress.</p>
+  {% endif %}
+
+  {# Live pending-work tiles so the backlog visibly shrinks after a run. #}
+  <div class="tiles tiles--compact">
+    <div class="tile"><div class="value">{{ stats.to_filter }}</div><div class="label">To filter</div></div>
+    <div class="tile"><div class="value">{{ stats.to_enrich }}</div><div class="label">To enrich</div></div>
+    <div class="tile"><div class="value">{{ stats.to_score }}</div><div class="label">To score</div></div>
+    <div class="tile"><div class="value">{{ stats.to_research_company }}</div><div class="label">To research (co.)</div></div>
+    <div class="tile"><div class="value">{{ stats.to_research_address }}</div><div class="label">To research (addr.)</div></div>
+  </div>
+</div>

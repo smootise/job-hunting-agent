@@ -15,12 +15,17 @@ from fastapi.templating import Jinja2Templates
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
 
-# filter_status / score_status → CSS modifier class (styled in app.css).
+# filter_status / score_status / review disposition → CSS modifier class
+# (styled in app.css).
 _BADGE_CLASSES = {
     "passed": "badge--ok",
     "scored": "badge--ok",
     "needs_review": "badge--warn",
     "rejected": "badge--bad",
+    # review dispositions (webapp V2)
+    "applied": "badge--ok",
+    "to_review": "badge--warn",
+    "not_interested": "badge--muted",
 }
 
 

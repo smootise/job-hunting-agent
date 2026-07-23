@@ -26,6 +26,14 @@
       {% endfor %}
     </select>
   </label>
+  <label>Review
+    <select name="disposition">
+      <option value="" {% if not active.disposition %}selected{% endif %}>All</option>
+      {% for value, label in disposition_filters %}
+      <option value="{{ value }}" {% if active.disposition == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
   <label>Sort by
     <select name="sort">
       <option value="score_total"     {% if active.sort == 'score_total' %}selected{% endif %}>Overall score</option>

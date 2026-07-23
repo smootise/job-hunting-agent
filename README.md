@@ -16,7 +16,7 @@ rationale and phase plan.
 - ✅ **Phase 1** — ingestion & state: three source adapters, SQLite storage, dedupe, idempotent runs.
 - ✅ **Phase 2** — hard filters, LinkedIn description enrichment, address + commute enrichment (Google Routes, three commute strategies — see `docs/enrichment.md`), and LLM scoring (`qwen3.6:35b-a3b`, zero tools; the `weekly_commute_fit` sub-score is an owner-calibrated Python curve — see `docs/scoring.md`).
 - 🚧 **Phase 3** (in progress) — the hand-rolled agent tool loop + the two **research agents** have shipped: address research (warm-up) and company research (a grounded company brief that feeds the scorer). The cover-letter agent is what remains. See `docs/agents.md`.
-- ✅ **Webapp v1** — a local, read-only dashboard / ranked offer list / offer detail (`jobscout serve`, FastAPI + HTMX). Browsing only; see `docs/webapp.md`.
+- ✅ **Webapp** — a local FastAPI + HTMX app (`jobscout serve`): dashboard / ranked offer list / offer detail (v1), plus application tracking and run-pipeline-from-the-UI buttons with a progress bar (v2). See `docs/webapp.md`.
 
 See `docs/architecture.md` for what exists now and the current stage-by-stage status.
 
@@ -145,10 +145,12 @@ commute into the total with **no model call** — it preserves the LLM's
 qualitative scores + reasoning (the model never sees commute, so re-running it
 would only add noise). `--ids` scopes any score run to specific offers.
 
-**7. Browse the results (webapp)** — a local, read-only dashboard over
-`data/jobs.db`: pipeline stats, a sortable/filterable ranked offer list, and a
-per-offer detail page (verdict, full score breakdown, commute detail, company
-brief + original posting).
+**7. The webapp** — a local UI over `data/jobs.db`: a stats dashboard, a
+sortable/filterable ranked offer list, and a per-offer detail page (verdict, full
+score breakdown, commute detail, company brief + original posting). It also
+**tracks your own hunt** (mark each offer to-review / applied / not-interested +
+notes) and **runs pipeline stages from the UI** (any stage, or the whole
+pipeline, via a background runner with a progress bar).
 
 ```
 uv run jobscout serve                 # → http://127.0.0.1:8020  (Ctrl+C to stop)
@@ -156,9 +158,10 @@ uv run jobscout serve --port 9000     # a different port
 uv run jobscout serve --reload        # auto-reload on code changes (development)
 ```
 
-FastAPI + HTMX, no build step, no CDN (htmx is vendored locally). It only
-*browses* — it triggers no pipeline stage, writes nothing, and makes no external
-call. The offer list sorts by the overall score or any individual rubric
+FastAPI + HTMX, no build step, no CDN (htmx is vendored locally). The run buttons
+execute the **same** pipeline code the CLI does — nothing new leaves the machine,
+no email. Write routes are same-origin-guarded; the server binds `127.0.0.1`
+only. The offer list sorts by the overall score or any individual rubric
 criterion (best culture fit, best commute fit, …). See `docs/webapp.md`.
 
 ## Tests

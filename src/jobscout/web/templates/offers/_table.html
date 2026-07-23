@@ -10,6 +10,7 @@
         <th>Company</th>
         <th>Source</th>
         <th>Status</th>
+        <th>Review</th>
         <th>Commute</th>
         <th>Remote</th>
         <th>Flags</th>
@@ -27,6 +28,9 @@
         <td>
           {% if job.filter_status %}<span class="badge {{ job.filter_status | badge_class }}">{{ job.filter_status | replace('_', ' ') }}</span>{% endif %}
           {% if job.score_status == 'needs_review' %}<span class="badge badge--warn">score?</span>{% endif %}
+        </td>
+        <td>
+          {% if job.review.disposition %}<span class="badge {{ job.review.disposition | badge_class }}">{{ job.review.disposition | replace('_', ' ') }}</span>{% endif %}
         </td>
         <td class="num">{% if job.commute_minutes is not none %}{{ job.commute_minutes | round1 }} min{% elif job.address_source == 'remote' %}remote{% else %}—{% endif %}</td>
         <td>{% if job.score.remote_policy %}<span class="chip">{{ job.score.remote_policy }}</span>{% endif %}</td>

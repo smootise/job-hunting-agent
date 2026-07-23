@@ -36,6 +36,7 @@ from jobscout.agents import address_agent, tools
 from jobscout.enrich import address as address_mod
 from jobscout.llm import client as llm_client
 from jobscout.models import JobRecord
+from jobscout.pipeline import ProgressFn
 from jobscout.storage import db
 
 logger = logging.getLogger("jobscout.research_address")
@@ -64,6 +65,7 @@ def run_research_address(
     limit: int | None = None,
     redo: bool = False,
     dry_run: bool = False,
+    on_progress: ProgressFn | None = None,
     _generate: address_agent.loop.GenerateFn | None = None,
     _search_client: httpx.Client | None = None,
     _fetch_client: httpx.Client | None = None,
@@ -108,11 +110,17 @@ def run_research_address(
         if limit is not None:
             worklist = worklist[:limit]
 
-        for row in worklist:
+        # Progress is over the AGENT worklist (the tail that actually needs the
+        # slow agent), not all candidates — pass-1's fast _needs_agent scan isn't
+        # reported.
+        total = len(worklist)
+        for i, row in enumerate(worklist, 1):
             _research_row(
                 conn, row, tools_map=tools_map, model=model, generate=generate,
                 geo_client=geo_client, dry_run=dry_run, summary=summary,
             )
+            if on_progress is not None:
+                on_progress(i, total)
         if not dry_run:
             conn.commit()
     finally:

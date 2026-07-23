@@ -84,17 +84,25 @@
 </div>
 {% endif %}
 
-{# ---- My review (DESIGNED, HIDDEN in V1) --------------------------- #}
-{# V2: application tracking. When the offer_review table + stats.review_stats()
-   land, flip `{% if false %}` to `{% if true %}` and feed the counts. Layout is
-   kept here so V2 is a drop-in, not a redesign. #}
-{% if false %}
+{# ---- My review (V2, live) ----------------------------------------- #}
 <h2>My review</h2>
 <p class="section-note">Where I am in my own application process.</p>
 <div class="tiles">
-  <div class="tile"><div class="value">0</div><div class="label">To review</div></div>
-  <div class="tile"><div class="value">0</div><div class="label">Applied</div></div>
-  <div class="tile"><div class="value">0</div><div class="label">Not interested</div></div>
+  <div class="tile"><div class="value">{{ review.unreviewed }}</div><div class="label">Unreviewed</div></div>
+  <div class="tile"><div class="value">{{ review.to_review }}</div><div class="label">To review</div></div>
+  <div class="tile tile--accent"><div class="value">{{ review.applied }}</div><div class="label">Applied</div></div>
+  <div class="tile"><div class="value">{{ review.not_interested }}</div><div class="label">Not interested</div></div>
 </div>
-{% endif %}
+
+{# ---- Run panel (V2) — trigger pipeline stages from the UI --------- #}
+<h2>Run</h2>
+<p class="section-note">Trigger a pipeline stage, or the whole pipeline. One runs at a time.</p>
+<div class="run-panel">
+  <button hx-post="/runs/pipeline" hx-target="#run-status" hx-swap="outerHTML" class="btn-primary">Run whole pipeline</button>
+  {% for stage in run_stages %}
+    <button hx-post="/runs/{{ stage }}" hx-target="#run-status" hx-swap="outerHTML">{{ stage | replace('-', ' ') }}</button>
+  {% endfor %}
+  <button hx-post="/runs/score-commute-only" hx-target="#run-status" hx-swap="outerHTML">score (commute-only)</button>
+</div>
+{% include "runs/_status.html" %}
 {% endblock %}

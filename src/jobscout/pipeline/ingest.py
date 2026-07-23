@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 
 from jobscout.adapters import france_travail, linkedin_email, wttj
 from jobscout.models import JobRecord
+from jobscout.pipeline import ProgressFn
 from jobscout.storage import db
 
 # The source registry: name -> zero-arg-ish fetch callable. Keeping this a
@@ -75,12 +76,17 @@ def run_ingest(
     limit: int = 200,
     dry_run: bool = False,
     db_path=db.DEFAULT_DB_PATH,
+    on_progress: ProgressFn | None = None,
 ) -> IngestSummary:
     """Fetch the given sources and persist new offers idempotently.
 
     `sources` defaults to all registered sources. `limit` is the per-source
     hard cap (a safety rail, per the brief's "max jobs per run"). Returns an
     IngestSummary; the CLI renders it.
+
+    ``on_progress`` (webapp runner) reports progress **per source** — the unit is
+    a source, not an offer, because total-fetched isn't knowable until each fetch
+    returns, whereas the source count is known upfront.
     """
     selected = sources or list(SOURCES)
     summary = IngestSummary(dry_run=dry_run)
@@ -93,8 +99,11 @@ def run_ingest(
         run_id = db.record_run_start(conn, dry_run=dry_run)
 
     try:
-        for name in selected:
+        total = len(selected)
+        for i, name in enumerate(selected, 1):
             summary.per_source[name] = _ingest_one(name, limit, dry_run, conn)
+            if on_progress is not None:
+                on_progress(i, total)
     finally:
         if conn is not None and run_id is not None:
             counts = {

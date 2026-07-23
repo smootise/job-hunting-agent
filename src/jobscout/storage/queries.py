@@ -52,14 +52,32 @@ ALLOWED_SORT_COLUMNS: frozenset[str] = frozenset(
 # to sort by, so it needs its own JSON path. See docs/scoring.md.
 _COMMUTE_CRITERION = "weekly_commute_fit"
 
+# Sentinel disposition value meaning "offers the owner hasn't reviewed yet" — i.e.
+# no ``offer_review`` row. A real disposition string filters on equality; this
+# filters on ``r.disposition IS NULL`` (the LEFT JOIN miss). A named constant
+# rather than an empty string so routes/tests reference it unambiguously.
+UNREVIEWED = "__unreviewed__"
+
+# The base FROM for the display queries: every job, LEFT JOINed to its optional
+# review row. LEFT (not INNER) so unreviewed offers still appear, with NULL
+# review columns. ``jobs.*`` keeps every jobs column (so ``hydrate_job`` still
+# finds the JSON blobs); the three ``r.*`` columns ride along for the UI.
+_JOBS_WITH_REVIEW = (
+    "SELECT jobs.*, r.disposition, r.notes, r.applied_at "
+    "FROM jobs LEFT JOIN offer_review r ON r.job_id = jobs.id"
+)
+
 
 def get_job(conn: sqlite3.Connection, job_id: int) -> sqlite3.Row | None:
     """Return the full row for one offer, or None if no such id.
 
-    A plain ``SELECT *`` so the caller (``hydrate_job``) gets every column,
-    including the JSON blobs the detail page renders.
+    LEFT JOINs ``offer_review`` so the caller (``hydrate_job``) gets every jobs
+    column (incl. the JSON blobs the detail page renders) plus the owner's review
+    state; a NULL review is normal (an unreviewed offer).
     """
-    return conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return conn.execute(
+        f"{_JOBS_WITH_REVIEW} WHERE jobs.id = ?", (job_id,)
+    ).fetchone()
 
 
 def _order_by_clause(order_by: str, descending: bool, criteria_names: frozenset[str]) -> str:
@@ -76,6 +94,10 @@ def _order_by_clause(order_by: str, descending: bool, criteria_names: frozenset[
     the key is absent). Those must sink to the bottom regardless of direction,
     so we prepend ``<expr> IS NULL`` — SQLite sorts False(0) before True(1),
     putting non-NULLs first. This is the NULLS-LAST idiom SQLite lacks natively.
+
+    Exprs are qualified with ``jobs.`` because the display queries LEFT JOIN
+    ``offer_review``; qualifying is harmless without the join (``jobs`` = the
+    table) and unambiguous with it.
     """
     direction = "DESC" if descending else "ASC"
 
@@ -88,13 +110,13 @@ def _order_by_clause(order_by: str, descending: bool, criteria_names: frozenset[
             path = "$.weekly_commute_fit"
         else:
             path = f"$.criteria_scores.{name}"
-        expr = f"json_extract(score_json, '{path}')"
+        expr = f"json_extract(jobs.score_json, '{path}')"
     elif order_by in ALLOWED_SORT_COLUMNS:
-        expr = order_by
+        expr = f"jobs.{order_by}"
     else:
         raise ValueError(f"invalid sort column: {order_by!r}")
 
-    return f"ORDER BY {expr} IS NULL, {expr} {direction}, id {direction}"
+    return f"ORDER BY {expr} IS NULL, {expr} {direction}, jobs.id {direction}"
 
 
 def list_jobs(
@@ -103,6 +125,7 @@ def list_jobs(
     filter_status: str | None = None,
     source: str | None = None,
     score_status: str | None = None,
+    disposition: str | None = None,
     order_by: str = "score_total",
     descending: bool = True,
     limit: int | None = None,
@@ -111,31 +134,36 @@ def list_jobs(
 ) -> list[sqlite3.Row]:
     """Return offers for the list view, filtered and sorted.
 
-    Filters (``filter_status``, ``source``, ``score_status``) are exact-match and
-    parameterized; a None filter is simply omitted. ``order_by`` accepts a plain
-    allowlisted column or the ``criteria:<name>`` form (see ``_order_by_clause``);
-    ``criteria_names`` is the set of valid rubric criteria (from the caller's
-    cached ``preferences.yaml``) — required only when sorting by a criterion.
+    Filters (``filter_status``, ``source``, ``score_status``, ``disposition``) are
+    exact-match and parameterized; a None filter is simply omitted. ``disposition``
+    also accepts the ``UNREVIEWED`` sentinel → offers with no review row.
+    ``order_by`` accepts a plain allowlisted column or the ``criteria:<name>`` form
+    (see ``_order_by_clause``); ``criteria_names`` is the set of valid rubric
+    criteria — required only when sorting by a criterion.
 
-    Sorting/paging happen in SQLite (``json_extract`` in ``ORDER BY``) rather than
-    in Python, so a large table doesn't have to be fully materialized. On an
-    exotic SQLite lacking the JSON1 extension you'd fall back to sorting the
-    parsed rows in Python; the bundled Python 3.12 SQLite (3.40+) has JSON1, so
-    that path isn't needed here.
+    The base query LEFT JOINs ``offer_review`` (``_JOBS_WITH_REVIEW``), so jobs
+    columns are qualified ``jobs.`` and review columns ``r.``. Sorting/paging
+    happen in SQLite (``json_extract`` in ``ORDER BY``) rather than in Python, so
+    a large table doesn't have to be fully materialized.
     """
     where: list[str] = []
     params: list[Any] = []
     if filter_status is not None:
-        where.append("filter_status = ?")
+        where.append("jobs.filter_status = ?")
         params.append(filter_status)
     if source is not None:
-        where.append("source = ?")
+        where.append("jobs.source = ?")
         params.append(source)
     if score_status is not None:
-        where.append("score_status = ?")
+        where.append("jobs.score_status = ?")
         params.append(score_status)
+    if disposition == UNREVIEWED:
+        where.append("r.disposition IS NULL")  # no review row = unreviewed
+    elif disposition is not None:
+        where.append("r.disposition = ?")
+        params.append(disposition)
 
-    sql = "SELECT * FROM jobs"
+    sql = _JOBS_WITH_REVIEW
     if where:
         sql += " WHERE " + " AND ".join(where)
     sql += " " + _order_by_clause(order_by, descending, criteria_names or frozenset())
@@ -175,4 +203,11 @@ def hydrate_job(row: sqlite3.Row) -> dict[str, Any]:
     data["company_brief"] = parse_json_column(data.get("company_brief"), {})
     data["commute"] = parse_json_column(data.get("commute_strategies"), {})
     data["filter_reasons"] = parse_json_column(data.get("filter_reasons"), [])
+    # The owner's review state (from the LEFT JOIN; all None for an unreviewed
+    # offer). Nested so templates read ``job.review.disposition``.
+    data["review"] = {
+        "disposition": data.get("disposition"),
+        "notes": data.get("notes"),
+        "applied_at": data.get("applied_at"),
+    }
     return data

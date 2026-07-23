@@ -18,6 +18,17 @@
   </div>
 </div>
 
+{# ---- My review (V2) ----------------------------------------------- #}
+<section class="block card">
+  <h2 style="margin-top:0">My review</h2>
+  {% include "offers/_review_control.html" %}
+  <hr style="border:none;border-top:1px solid var(--border);margin:1rem 0">
+  <div class="run-line">
+    <button hx-post="/offers/{{ job.id }}/rescore" hx-target="#run-status" hx-swap="outerHTML">Rescore this offer</button>
+  </div>
+  {% include "runs/_status.html" %}
+</section>
+
 {# ---- 1. Summary + verdict ----------------------------------------- #}
 <section class="block card">
   <h2 style="margin-top:0">Summary &amp; verdict</h2>

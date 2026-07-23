@@ -73,6 +73,19 @@ class LastRun:
     dry_run: bool
 
 
+@dataclass(frozen=True)
+class ReviewStats:
+    """The 'My review' dashboard section: where the owner is in their own process.
+
+    ``unreviewed`` is offers with no ``offer_review`` row yet — the triage backlog.
+    """
+
+    to_review: int
+    applied: int
+    not_interested: int
+    unreviewed: int
+
+
 def _count(conn: sqlite3.Connection, where: str | None = None) -> int:
     sql = "SELECT COUNT(*) FROM jobs"
     if where:
@@ -105,6 +118,29 @@ def dashboard_stats(conn: sqlite3.Connection) -> DashboardStats:
         to_research_company=_count(conn, _PENDING["to_research_company"]),
         to_research_address=_count(conn, _PENDING["to_research_address"]),
     )
+
+
+def review_stats(conn: sqlite3.Connection) -> ReviewStats:
+    """Count offers per the owner's disposition, plus the unreviewed backlog.
+
+    Mirrors ``dashboard_stats``'s ``by_filter_status`` GROUP BY loop. ``_count``
+    isn't reused — it's hardcoded ``FROM jobs`` and these count ``offer_review``.
+    Unknown/legacy disposition values are ignored (defensive), matching how the
+    filter loop buckets only known keys.
+    """
+    counts = {"to_review": 0, "applied": 0, "not_interested": 0}
+    for row in conn.execute(
+        "SELECT disposition, COUNT(*) AS n FROM offer_review GROUP BY disposition"
+    ):
+        key = row["disposition"]
+        if key in counts:
+            counts[key] = int(row["n"])
+    unreviewed = int(
+        conn.execute(
+            "SELECT COUNT(*) FROM jobs WHERE id NOT IN (SELECT job_id FROM offer_review)"
+        ).fetchone()[0]
+    )
+    return ReviewStats(**counts, unreviewed=unreviewed)
 
 
 def _row_to_last_run(row: sqlite3.Row) -> LastRun:
