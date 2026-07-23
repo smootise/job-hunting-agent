@@ -142,7 +142,9 @@ Two flags scope the same stage without a full re-score of everything:
   eligibility predicate — a rejected/unfiltered id is silently excluded, never
   scored). An explicit id list means *"score these"*, so it overrides the
   `scored_at IS NULL` gate. This is the targeted-run primitive the webapp drives;
-  `run_score(ids=[...])` is the programmatic entry point.
+  `run_score(ids=[...])` is the programmatic entry point. The same `ids` pattern
+  was later generalized to every stage's selector (enrich/research/filter) to
+  power the webapp's per-offer run buttons — see `docs/webapp.md`.
 - **`--commute-only`** recomputes **only** `weekly_commute_fit` + the blended
   total from each row's *existing* `score_json` — **no LLM call**. The
   qualitative criteria, `onsite_days`, `remote_policy` and `reasoning` are read
