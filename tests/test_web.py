@@ -173,10 +173,13 @@ def test_trigger_unknown_stage_404(client):
     assert tc.post("/runs/nonsense").status_code == 404
 
 
-def test_rescore_route(client):
+def test_per_offer_run_routes(client):
     tc, ids = client
-    assert tc.post(f"/offers/{ids['a']}/rescore").status_code == 200
-    assert tc.post("/offers/999999/rescore").status_code == 404
+    # score is a per-offer stage; a missing offer 404s; an unknown stage 404s.
+    assert tc.post(f"/offers/{ids['a']}/runs/score").status_code == 200
+    assert tc.post("/offers/999999/runs/score").status_code == 404
+    assert tc.post(f"/offers/{ids['a']}/runs/ingest").status_code == 404  # not per-offer
+    assert tc.post(f"/offers/{ids['a']}/runs/nonsense").status_code == 404
 
 
 def test_require_local_origin(client):

@@ -357,7 +357,11 @@ def record_run_finish(
 
 
 def select_unfiltered_jobs(
-    conn: sqlite3.Connection, *, limit: int | None = None, refilter: bool = False
+    conn: sqlite3.Connection,
+    *,
+    limit: int | None = None,
+    refilter: bool = False,
+    ids: list[int] | None = None,
 ) -> list[sqlite3.Row]:
     """Return jobs awaiting a filter verdict (or all jobs when refiltering).
 
@@ -365,17 +369,32 @@ def select_unfiltered_jobs(
     is what makes the filter stage idempotent: a re-run picks up only newly
     ingested offers, exactly like ingest's "new since last run" is decided by
     the DB. ``refilter=True`` selects every job so a preferences.yaml change can
-    be re-applied to the whole table. Rows are dict-like ``sqlite3.Row`` and
-    carry every column, so ``JobRecord.from_row`` can consume them directly.
+    be re-applied to the whole table.
+
+    ``ids`` restricts to specific job ids (the per-offer webapp button — "re-filter
+    this offer", e.g. to un-reject it after a preferences change), dropping the
+    ``filter_status IS NULL`` gate. Unlike the other stages, filter has no
+    ``filter_status`` eligibility gate (it's the stage that *sets* it), so a
+    rejected offer can legitimately be re-filtered. Rows carry every column for
+    ``JobRecord.from_row``.
     """
     sql = "SELECT * FROM jobs"
-    if not refilter:
-        sql += " WHERE filter_status IS NULL"
+    params: list[object] = []
+    where: list[str] = []
+    if ids is not None:
+        if not ids:
+            return []
+        where.append(f"id IN ({', '.join('?' for _ in ids)})")
+        params.extend(ids)
+    elif not refilter:
+        where.append("filter_status IS NULL")
+    if where:
+        sql += " WHERE " + " AND ".join(where)
     sql += " ORDER BY id"
     if limit is not None:
         sql += " LIMIT ?"
-        return conn.execute(sql, (limit,)).fetchall()
-    return conn.execute(sql).fetchall()
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
 
 
 def record_filter_verdict(
@@ -408,6 +427,7 @@ def select_jobs_missing_description(
     *,
     source: str = "linkedin_email",
     limit: int | None = None,
+    ids: list[int] | None = None,
 ) -> list[sqlite3.Row]:
     """Return rows for one source that have no stored description yet.
 
@@ -415,15 +435,27 @@ def select_jobs_missing_description(
     what makes the fetch cheap and idempotent: an offer we already backfilled is
     skipped, so a re-run only touches jobs still missing prose. This is the same
     "novelty lives in the DB" idempotency the ingest and filter stages use, and
-    it doubles as the fetch cache — we never re-hit a job we've enriched. Rows
-    carry every column, so ``JobRecord.from_row`` consumes them directly.
+    it doubles as the fetch cache — we never re-hit a job we've enriched.
+
+    ``ids`` restricts to specific job ids (the per-offer webapp button — "re-fetch
+    this LinkedIn offer's description"), dropping the ``description IS NULL`` gate
+    so an already-backfilled offer is re-fetched. The ``source`` gate stays (this
+    stage is LinkedIn-only). Rows carry every column for ``JobRecord.from_row``.
     """
-    sql = "SELECT * FROM jobs WHERE source = ? AND (description IS NULL OR description = '')"
+    sql = "SELECT * FROM jobs WHERE source = ?"
+    params: list[object] = [source]
+    if ids is not None:
+        if not ids:
+            return []
+        sql += f" AND id IN ({', '.join('?' for _ in ids)})"
+        params.extend(ids)
+    else:
+        sql += " AND (description IS NULL OR description = '')"
     sql += " ORDER BY id"
     if limit is not None:
         sql += " LIMIT ?"
-        return conn.execute(sql, (source, limit)).fetchall()
-    return conn.execute(sql, (source,)).fetchall()
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
 
 
 def backfill_description(
@@ -459,7 +491,11 @@ def backfill_description(
 
 
 def select_jobs_to_enrich(
-    conn: sqlite3.Connection, *, limit: int | None = None, re_enrich: bool = False
+    conn: sqlite3.Connection,
+    *,
+    limit: int | None = None,
+    re_enrich: bool = False,
+    ids: list[int] | None = None,
 ) -> list[sqlite3.Row]:
     """Return offers awaiting commute enrichment (or all enrichable, re-enrich).
 
@@ -469,17 +505,28 @@ def select_jobs_to_enrich(
     NULL``). This is the stage's idempotency, same shape as ``select_unfiltered_
     jobs``: a re-run only picks up newly-passed offers. ``re_enrich=True`` selects
     every enrichable row so a preferences.yaml commute change can be re-applied.
-    Rejected offers are never enriched (we don't spend API calls on them). Rows
-    carry every column, so ``JobRecord.from_row`` consumes them directly.
+
+    ``ids`` restricts to specific job ids (the per-offer webapp button — "re-route
+    this offer's commute"). Like ``re_enrich`` but scoped: an explicit id list
+    means "enrich these", so the ``enriched_at IS NULL`` gate is dropped. The
+    ``filter_status`` eligibility gate STILL applies — a rejected offer's id
+    selects nothing (we never spend API calls on rejected offers; that's a safety
+    rail, not just idempotency). Rows carry every column for ``JobRecord.from_row``.
     """
     sql = "SELECT * FROM jobs WHERE filter_status IN ('passed', 'needs_review')"
-    if not re_enrich:
+    params: list[object] = []
+    if ids is not None:
+        if not ids:
+            return []
+        sql += f" AND id IN ({', '.join('?' for _ in ids)})"
+        params.extend(ids)
+    elif not re_enrich:
         sql += " AND enriched_at IS NULL"
     sql += " ORDER BY id"
     if limit is not None:
         sql += " LIMIT ?"
-        return conn.execute(sql, (limit,)).fetchall()
-    return conn.execute(sql).fetchall()
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
 
 
 def record_enrichment(
@@ -658,7 +705,11 @@ def upsert_review(
 
 
 def select_jobs_to_research_company(
-    conn: sqlite3.Connection, *, limit: int | None = None, redo: bool = False
+    conn: sqlite3.Connection,
+    *,
+    limit: int | None = None,
+    redo: bool = False,
+    ids: list[int] | None = None,
 ) -> list[sqlite3.Row]:
     """Return offers awaiting company research (or all, when ``redo``).
 
@@ -667,16 +718,27 @@ def select_jobs_to_research_company(
     haven't been researched yet (``company_researched_at IS NULL``). Company
     research runs on *every* such offer (unlike address research, which only
     touches the unroutable tail). ``redo=True`` selects all so a re-run can
-    refresh briefs. Rows carry every column for ``JobRecord.from_row``.
+    refresh briefs.
+
+    ``ids`` restricts to specific job ids (the per-offer webapp button — "research
+    this offer's company"), dropping the ``company_researched_at`` gate but
+    keeping the ``filter_status`` eligibility gate. Rows carry every column for
+    ``JobRecord.from_row``.
     """
     sql = "SELECT * FROM jobs WHERE filter_status IN ('passed', 'needs_review')"
-    if not redo:
+    params: list[object] = []
+    if ids is not None:
+        if not ids:
+            return []
+        sql += f" AND id IN ({', '.join('?' for _ in ids)})"
+        params.extend(ids)
+    elif not redo:
         sql += " AND company_researched_at IS NULL"
     sql += " ORDER BY id"
     if limit is not None:
         sql += " LIMIT ?"
-        return conn.execute(sql, (limit,)).fetchall()
-    return conn.execute(sql).fetchall()
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
 
 
 def record_company_brief(
@@ -701,7 +763,11 @@ def record_company_brief(
 
 
 def select_jobs_to_research_address(
-    conn: sqlite3.Connection, *, limit: int | None = None, redo: bool = False
+    conn: sqlite3.Connection,
+    *,
+    limit: int | None = None,
+    redo: bool = False,
+    ids: list[int] | None = None,
 ) -> list[sqlite3.Row]:
     """Return candidate rows for the address agent (the unroutable tail).
 
@@ -714,18 +780,31 @@ def select_jobs_to_research_address(
     when it returns ``needs_address``/``unresolved``. ``redo=True`` also re-offers
     rows already placed by the agent (so a better search can be re-attempted).
 
+    ``ids`` restricts to specific job ids (the per-offer webapp button — "re-search
+    this offer's address"): the ``address_source != 'agent'`` gate is dropped (so
+    an already-agent-placed offer is re-offered, like ``redo`` but scoped) while
+    the ``filter_status`` eligibility gate stays. The stage's own
+    ``resolve_address``/``_needs_agent`` check still decides whether the agent
+    actually runs, so a well-placed offer is a harmless no-op.
+
     Deliberately does NOT gate on ``enriched_at``: research runs *before*
     ``enrich-commute`` in the pipeline (which is the sole router), so at this
     point the tail carries no enrichment stamp yet.
     """
     sql = "SELECT * FROM jobs WHERE filter_status IN ('passed', 'needs_review')"
-    if not redo:
+    params: list[object] = []
+    if ids is not None:
+        if not ids:
+            return []
+        sql += f" AND id IN ({', '.join('?' for _ in ids)})"
+        params.extend(ids)
+    elif not redo:
         sql += " AND (address_source IS NULL OR address_source != 'agent')"
     sql += " ORDER BY id"
     if limit is not None:
         sql += " LIMIT ?"
-        return conn.execute(sql, (limit,)).fetchall()
-    return conn.execute(sql).fetchall()
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
 
 
 def record_agent_address(

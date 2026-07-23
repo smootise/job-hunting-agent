@@ -81,6 +81,7 @@ def run_enrich_linkedin(
     min_delay: float = 2.0,
     max_delay: float = 5.0,
     cache_dir: Path = DEFAULT_CACHE_DIR,
+    ids: list[int] | None = None,
     dry_run: bool = False,
     on_progress: ProgressFn | None = None,
     _client: httpx.Client | None = None,
@@ -106,7 +107,7 @@ def run_enrich_linkedin(
     client = _client or httpx.Client(timeout=20.0, headers=_HEADERS, follow_redirects=True)
 
     try:
-        rows = db.select_jobs_missing_description(conn, limit=limit)
+        rows = db.select_jobs_missing_description(conn, limit=limit, ids=ids)
         summary.considered = len(rows)
         made_network_call = False
 

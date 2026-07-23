@@ -135,8 +135,8 @@ Write routes (`POST`, all behind `require_local_origin`) — V2:
 | Path | Does |
 |---|---|
 | `/offers/{id}/review` | `upsert_review` (disposition + notes) → swaps back the review control |
-| `/runs/{stage}` | enqueue a stage (or `pipeline`) → status fragment; 404 unknown; busy is harmless |
-| `/offers/{id}/rescore` | enqueue `score --ids=<id>` (targeted re-score) → status fragment |
+| `/runs/{stage}` | enqueue a stage (or `pipeline`) on the whole worklist → status fragment; 404 unknown; busy is harmless |
+| `/offers/{id}/runs/{stage}` | enqueue a stage on **one offer** (`<stage> --ids=<id>`, forced past the done-gate) → status fragment; 404 if the stage isn't per-offer (e.g. `ingest`) |
 
 `/offers` and `/offers/table` share one `_table.html` partial, so first paint
 and every HTMX sort/filter swap render identically. A bad `sort` param is a
@@ -191,14 +191,28 @@ progress callback wired in.
   badge** / commute + remote chip / red-flag count. Sortable by the overall score
   **or any single rubric criterion** via the sort dropdown, plus
   status/source/**disposition** filters — all HTMX partial swaps.
-- **Offer detail** — a **My review** card at the top (V2: the disposition +
-  notes control that POSTs and swaps itself back, plus a "Rescore this offer"
-  button), then four blocks: summary + verdict; full score breakdown (each
-  criterion's 0–10 with its relative weight — weights sum to 73); commute detail
-  (best + three strategies with per-leg breakdown + resolved address/source);
-  company research + raw posting + metadata with an outbound "View original
-  posting" link. A **hidden office-map slot** carries the office `lat`/`lon` for a
-  future map.
+- **Offer detail** — a **My review** card (V2: the disposition + notes control
+  that POSTs and swaps itself back) and a **"Run a step on this offer"** panel
+  (V2: re-run any applicable stage on just this offer — filter / enrich-linkedin /
+  enrich-commute / research-address / research-company / (re)score). Visibility:
+  enrich-linkedin only on `linkedin_email` offers; the pipeline stages are hidden
+  on rejected offers (they'd no-op — the eligibility gate is a real safety rail,
+  not idempotency); re-filter always shows (it can un-reject after a prefs
+  change). The expensive LLM/network re-runs carry an `hx-confirm`. Then four
+  blocks: summary + verdict; full score breakdown (each criterion's 0–10 with its
+  relative weight — weights sum to 73); commute detail (best + three strategies
+  with per-leg breakdown + resolved address/source); company research + raw
+  posting + metadata with an outbound "View original posting" link. A **hidden
+  office-map slot** carries the office `lat`/`lon` for a future map.
+
+Per-offer targeting reuses the `score --ids` mechanism, now generalized: each
+worklist selector (`select_unfiltered_jobs`, `select_jobs_to_enrich`,
+`select_jobs_to_research_*`, `select_jobs_missing_description`) takes an `ids`
+param that (a) restricts to those ids, (b) **drops the "already done" gate** so a
+deliberate re-run works, but (c) **keeps the real eligibility gate** (a rejected
+offer selects nothing for the pipeline stages — a safe no-op). The runner's
+stage thunks are dual-purpose: `job_id=None` runs the whole worklist (dashboard),
+a `job_id` passes `ids=[job_id]` (detail page).
 
 ## Shutdown
 

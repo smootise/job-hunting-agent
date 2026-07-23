@@ -75,6 +75,7 @@ def run_filter(
     db_path=db.DEFAULT_DB_PATH,
     limit: int | None = None,
     refilter: bool = False,
+    ids: list[int] | None = None,
     dry_run: bool = False,
     on_progress: ProgressFn | None = None,
 ) -> FilterSummary:
@@ -91,7 +92,7 @@ def run_filter(
     conn = db.connect(db_path)
     run_id = None if dry_run else db.record_run_start(conn, dry_run=dry_run)
     try:
-        rows = db.select_unfiltered_jobs(conn, limit=limit, refilter=refilter)
+        rows = db.select_unfiltered_jobs(conn, limit=limit, refilter=refilter, ids=ids)
         total = len(rows)
         for i, row in enumerate(rows, 1):
             verdict = _judge_row(row, prefs)

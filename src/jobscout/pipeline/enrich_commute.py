@@ -65,6 +65,7 @@ def run_enrich_commute(
     db_path=db.DEFAULT_DB_PATH,
     limit: int | None = None,
     re_enrich: bool = False,
+    ids: list[int] | None = None,
     dry_run: bool = False,
     on_progress: ProgressFn | None = None,
     _geo_client: httpx.Client | None = None,
@@ -95,7 +96,7 @@ def run_enrich_commute(
         api_key = config.google_routes_key(env)
         home = _resolve_home(prefs, geo_client)
 
-        rows = db.select_jobs_to_enrich(conn, limit=limit, re_enrich=re_enrich)
+        rows = db.select_jobs_to_enrich(conn, limit=limit, re_enrich=re_enrich, ids=ids)
         summary.considered = len(rows)
 
         for i, row in enumerate(rows, 1):

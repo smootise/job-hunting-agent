@@ -235,56 +235,67 @@ class JobRunner:
         Every thunk takes ``(*, job_id=None, on_progress=None)`` (a uniform shape
         the worker calls) and binds the runner-supplied paths. ``db_path`` is
         always the resolved settings path — never the CWD default.
+
+        The pipeline-stage thunks are **dual-purpose**: called with ``job_id=None``
+        (a dashboard button) they run the stage's whole worklist; called with a
+        ``job_id`` (a per-offer detail-page button) they pass ``ids=[job_id]`` so
+        the stage runs on just that offer, forcing past the "already done" gate so
+        a deliberate re-run works. ``ingest`` is the exception — it fetches new
+        offers from sources, so it has no per-offer form.
         """
         s = self._settings
         db_path = s.db_path
         prefs = s.preferences_path
         env = s.env_path
 
+        def _ids(job_id):
+            """[] means 'no offers' to a stage, so pass None (whole worklist)
+            when no job_id, else [job_id] (that offer only)."""
+            return None if job_id is None else [job_id]
+
         def _ingest(*, job_id=None, on_progress=None):
             return ingest.run_ingest(db_path=db_path, on_progress=on_progress)
 
         def _filter(*, job_id=None, on_progress=None):
             return filter_stage.run_filter(
-                prefs_path=prefs, db_path=db_path, on_progress=on_progress
+                prefs_path=prefs, db_path=db_path, ids=_ids(job_id),
+                on_progress=on_progress,
             )
 
         def _enrich_linkedin(*, job_id=None, on_progress=None):
             return enrich_linkedin.run_enrich_linkedin(
-                prefs_path=prefs, db_path=db_path, on_progress=on_progress
+                prefs_path=prefs, db_path=db_path, ids=_ids(job_id),
+                on_progress=on_progress,
             )
 
         def _enrich_commute(*, job_id=None, on_progress=None):
             return enrich_commute.run_enrich_commute(
-                prefs_path=prefs, env_path=env, db_path=db_path, on_progress=on_progress
+                prefs_path=prefs, env_path=env, db_path=db_path, ids=_ids(job_id),
+                on_progress=on_progress,
             )
 
         def _research_address(*, job_id=None, on_progress=None):
             return research_address.run_research_address(
-                prefs_path=prefs, env_path=env, db_path=db_path, on_progress=on_progress
+                prefs_path=prefs, env_path=env, db_path=db_path, ids=_ids(job_id),
+                on_progress=on_progress,
             )
 
         def _research_company(*, job_id=None, on_progress=None):
             return research_company.run_research_company(
-                prefs_path=prefs, env_path=env, db_path=db_path, on_progress=on_progress
+                prefs_path=prefs, env_path=env, db_path=db_path, ids=_ids(job_id),
+                on_progress=on_progress,
             )
 
         def _score(*, job_id=None, on_progress=None):
             return score_stage.run_score(
-                prefs_path=prefs, db_path=db_path, on_progress=on_progress
+                prefs_path=prefs, db_path=db_path, ids=_ids(job_id),
+                on_progress=on_progress,
             )
 
         def _score_commute_only(*, job_id=None, on_progress=None):
             return score_stage.run_score(
                 prefs_path=prefs, db_path=db_path, commute_only=True,
-                on_progress=on_progress,
-            )
-
-        def _rescore(*, job_id=None, on_progress=None):
-            # Targeted re-score of one offer (score --ids). job_id is required.
-            return score_stage.run_score(
-                prefs_path=prefs, db_path=db_path, ids=[job_id],
-                on_progress=on_progress,
+                ids=_ids(job_id), on_progress=on_progress,
             )
 
         return {
@@ -296,5 +307,4 @@ class JobRunner:
             "research-company": _research_company,
             "score": _score,
             "score-commute-only": _score_commute_only,
-            "rescore": _rescore,
         }
