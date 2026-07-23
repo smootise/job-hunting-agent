@@ -42,6 +42,7 @@ from jobscout.models import JobRecord
 from jobscout.pipeline import scoring
 from jobscout.pipeline.commute_score import weekly_commute_fit
 from jobscout.pipeline.scoring import ScoreResult, ScoreValidationError
+from jobscout.pipeline import ProgressFn
 from jobscout.storage import db
 
 logger = logging.getLogger("jobscout.score")
@@ -78,6 +79,7 @@ def run_score(
     commute_only: bool = False,
     ids: list[int] | None = None,
     dry_run: bool = False,
+    on_progress: ProgressFn | None = None,
     _generate: GenerateFn | None = None,
 ) -> ScoreSummary:
     """Score passed/needs_review offers with the LLM; blend commute; persist.
@@ -114,7 +116,7 @@ def run_score(
             conn, limit=limit, rescore=rescore or commute_only, ids=ids
         )
         summary.considered = len(rows)
-        for row in rows:
+        for i, row in enumerate(rows, 1):
             if commute_only:
                 _recompute_commute_row(
                     conn, row, criteria=criteria, dry_run=dry_run, summary=summary,
@@ -124,6 +126,8 @@ def run_score(
                     conn, row, criteria=criteria, ideal=ideal, model=model,
                     generate=generate, dry_run=dry_run, summary=summary,
                 )
+            if on_progress is not None:
+                on_progress(i, summary.considered)
         if not dry_run:
             conn.commit()
     finally:

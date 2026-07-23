@@ -34,6 +34,7 @@ from dataclasses import dataclass
 
 from jobscout import config
 from jobscout.models import JobRecord
+from jobscout.pipeline import ProgressFn
 from jobscout.pipeline.filters import (
     FilterReason,
     FilterVerdict,
@@ -75,6 +76,7 @@ def run_filter(
     limit: int | None = None,
     refilter: bool = False,
     dry_run: bool = False,
+    on_progress: ProgressFn | None = None,
 ) -> FilterSummary:
     """Apply the hard filters to stored offers and persist the verdicts.
 
@@ -90,7 +92,8 @@ def run_filter(
     run_id = None if dry_run else db.record_run_start(conn, dry_run=dry_run)
     try:
         rows = db.select_unfiltered_jobs(conn, limit=limit, refilter=refilter)
-        for row in rows:
+        total = len(rows)
+        for i, row in enumerate(rows, 1):
             verdict = _judge_row(row, prefs)
             summary._bump(verdict.outcome)
             if verdict.outcome is not Outcome.PASSED:
@@ -102,6 +105,8 @@ def run_filter(
                     filter_status=verdict.outcome.value,
                     filter_reasons_json=verdict.reasons_json(),
                 )
+            if on_progress is not None:
+                on_progress(i, total)
         if not dry_run:
             conn.commit()
     finally:

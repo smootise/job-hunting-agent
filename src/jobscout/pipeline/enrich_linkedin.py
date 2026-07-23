@@ -41,6 +41,7 @@ import httpx
 from jobscout import config, normalize
 from jobscout.adapters.linkedin_guest import parse_job_posting
 from jobscout.models import JobRecord
+from jobscout.pipeline import ProgressFn
 from jobscout.pipeline.filters import Outcome, apply_hard_filters
 from jobscout.storage import db
 
@@ -81,6 +82,7 @@ def run_enrich_linkedin(
     max_delay: float = 5.0,
     cache_dir: Path = DEFAULT_CACHE_DIR,
     dry_run: bool = False,
+    on_progress: ProgressFn | None = None,
     _client: httpx.Client | None = None,
 ) -> EnrichSummary:
     """Fetch guest pages for LinkedIn offers missing a description; backfill.
@@ -108,7 +110,7 @@ def run_enrich_linkedin(
         summary.considered = len(rows)
         made_network_call = False
 
-        for row in rows:
+        for i, row in enumerate(rows, 1):
             job_id = row["external_id"]
             html, was_cached = _get_html(
                 client, job_id, cache_dir, dry_run=dry_run,
@@ -122,20 +124,22 @@ def run_enrich_linkedin(
             if not posting.description:
                 summary.failed += 1
                 logger.info("no description for LinkedIn %s (left needs_review)", job_id)
-                continue
+            else:
+                summary.enriched += 1
+                if was_cached:
+                    summary.from_cache += 1
 
-            summary.enriched += 1
-            if was_cached:
-                summary.from_cache += 1
+                contract = _resolve_contract(posting.employment_type)
+                if not dry_run:
+                    db.backfill_description(
+                        conn, row["id"],
+                        description=posting.description,
+                        contract_type=contract,
+                    )
+                    _refilter_row(conn, row["id"], prefs, summary)
 
-            contract = _resolve_contract(posting.employment_type)
-            if not dry_run:
-                db.backfill_description(
-                    conn, row["id"],
-                    description=posting.description,
-                    contract_type=contract,
-                )
-                _refilter_row(conn, row["id"], prefs, summary)
+            if on_progress is not None:
+                on_progress(i, summary.considered)
 
         if not dry_run:
             conn.commit()

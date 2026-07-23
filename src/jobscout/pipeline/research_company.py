@@ -34,6 +34,7 @@ from jobscout import config
 from jobscout.agents import company_agent, tools
 from jobscout.llm import client as llm_client
 from jobscout.models import JobRecord
+from jobscout.pipeline import ProgressFn
 from jobscout.storage import db
 
 logger = logging.getLogger("jobscout.research_company")
@@ -77,6 +78,7 @@ def run_research_company(
     limit: int | None = None,
     redo: bool = False,
     dry_run: bool = False,
+    on_progress: ProgressFn | None = None,
     _generate: company_agent.loop.GenerateFn | None = None,
     _search_client: httpx.Client | None = None,
     _fetch_client: httpx.Client | None = None,
@@ -104,12 +106,14 @@ def run_research_company(
 
         rows = db.select_jobs_to_research_company(conn, limit=limit, redo=redo)
         summary.considered = len(rows)
-        for row in rows:
+        for i, row in enumerate(rows, 1):
             _research_row(
                 conn, row, searxng=searxng, search_client=search_client,
                 fetch_client=fetch_client, cache=cache, model=model,
                 generate=generate, dry_run=dry_run, summary=summary,
             )
+            if on_progress is not None:
+                on_progress(i, summary.considered)
         if not dry_run:
             conn.commit()
     finally:

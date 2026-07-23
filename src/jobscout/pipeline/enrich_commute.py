@@ -38,6 +38,7 @@ from jobscout.enrich import geocode
 from jobscout.enrich import routing
 from jobscout.enrich.routing import Coordinates
 from jobscout.models import JobRecord
+from jobscout.pipeline import ProgressFn
 from jobscout.storage import db
 
 logger = logging.getLogger("jobscout.enrich_commute")
@@ -65,6 +66,7 @@ def run_enrich_commute(
     limit: int | None = None,
     re_enrich: bool = False,
     dry_run: bool = False,
+    on_progress: ProgressFn | None = None,
     _geo_client: httpx.Client | None = None,
     _routing_client: httpx.Client | None = None,
 ) -> EnrichCommuteSummary:
@@ -96,12 +98,14 @@ def run_enrich_commute(
         rows = db.select_jobs_to_enrich(conn, limit=limit, re_enrich=re_enrich)
         summary.considered = len(rows)
 
-        for row in rows:
+        for i, row in enumerate(rows, 1):
             _enrich_row(
                 conn, row, home=home, api_key=api_key, prefs=commute_prefs,
                 geo_client=geo_client, routing_client=routing_client,
                 dry_run=dry_run, summary=summary,
             )
+            if on_progress is not None:
+                on_progress(i, summary.considered)
         if not dry_run:
             conn.commit()
     finally:
