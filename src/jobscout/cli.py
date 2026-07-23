@@ -263,6 +263,12 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Auto-reload on code changes (development).",
     )
+    serve_parser.add_argument(
+        "--stop",
+        action="store_true",
+        help="Stop a running `jobscout serve` (via its PID file) and exit. "
+        "Frees the port and the lock on jobscout.exe so `uv` can rebuild.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -310,23 +316,34 @@ def _run_serve(args: argparse.Namespace) -> None:
 
     import uvicorn
 
+    from jobscout.web import pidfile
     from jobscout.web.settings import resolve_settings
+
+    settings = resolve_settings(host=args.host, port=args.port)
+
+    # `--stop`: kill a server started earlier from this project (via its PID
+    # file), then exit. Frees the port and the lock on jobscout.exe so `uv` can
+    # rebuild — the recurring Windows friction this is here to remove.
+    if args.stop:
+        print(pidfile.stop(settings.project_root))
+        return
 
     # The server runs the module-level ``jobscout.web.app:app`` (import string),
     # which builds its Settings from the environment — so the chosen host/port
     # must be exported BEFORE that import, or the app's Settings (hence the
     # same-origin guard) would keep the defaults and reject requests to a
-    # non-default port. resolve_settings() below then reflects the same values.
+    # non-default port.
     os.environ["JOBSCOUT_HOST"] = args.host
     os.environ["JOBSCOUT_PORT"] = str(args.port)
 
-    settings = resolve_settings(host=args.host, port=args.port)
     print(f"Job Scout webapp → http://{args.host}:{args.port}  (db: {settings.db_path})")
-    print("Press Ctrl+C to stop.")
+    print("Press Ctrl+C to stop (or `jobscout serve --stop` from another shell).")
 
     if args.reload:
         # The reloader supervises a child process and forwards Ctrl+C to it;
-        # its default signal handling is reliable, so use the stock runner.
+        # its default signal handling is reliable, so use the stock runner. (No
+        # PID file here — the reloader's child PID isn't this process, so --stop
+        # wouldn't target it reliably; use Ctrl+C in the reloader's shell.)
         uvicorn.run(
             "jobscout.web.app:app",
             host=args.host,
@@ -349,11 +366,17 @@ def _run_serve(args: argparse.Namespace) -> None:
     signal.signal(signal.SIGINT, _request_stop)
     signal.signal(signal.SIGTERM, _request_stop)
     # SIGBREAK exists only on Windows; it's what a console delivers to a child
-    # started in its own process group (Ctrl+Break, and Ctrl+C in that setup).
-    # Handling it too means shutdown is reliable however the process was spawned.
+    # started in its own process group (Ctrl+Break, and Ctrl+C in that setup),
+    # and what `serve --stop` sends. Handling it makes shutdown reliable however
+    # the process was spawned.
     if hasattr(signal, "SIGBREAK"):
         signal.signal(signal.SIGBREAK, _request_stop)
-    server.run()
+
+    pid_file = pidfile.write(settings.project_root)
+    try:
+        server.run()
+    finally:
+        pidfile.remove(pid_file)
 
 
 def _run_ingest(args: argparse.Namespace) -> None:

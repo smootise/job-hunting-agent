@@ -173,9 +173,15 @@ uv run pytest              # offline unit tests (parsing, dedupe, idempotency)
 uv run ruff check src tests
 ```
 
+Fast smoke checks (no real server / no network): `uv run python
+scripts/webapp_smoke.py` drives the webapp routes in-process.
+
 For a hands-on end-to-end walkthrough against the live sources, see the manual
 test plans: `docs/phase-1-manual-test-plan.md` (ingestion & state) and
 `docs/phase-3-manual-test-plan.md` (the research agents + SearXNG wiring).
+
+**Working in this repo?** See `docs/dev.md` for the dev workflow (running/stopping
+the server, the branch→PR→merge flow, the Windows `serve --stop` gotcha).
 
 ## Model bake-off
 
