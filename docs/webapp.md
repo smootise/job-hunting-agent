@@ -171,6 +171,19 @@ progress callback wired in.
   is idempotent by DB state, **re-pressing the button resumes**: completed stages
   find an empty worklist (fast no-op) and the failed stage picks up its remaining
   offers. No resume bookkeeping.
+- **Cooperative cancel (Stop).** A `POST /runs/cancel` sets a `threading.Event`
+  the runner reuses `on_progress` to check — once per offer, *after* that offer
+  commits. When set, the progress closure raises `RunCancelled`, which unwinds
+  through the stage's `finally` (commit + `record_run_finish`) and sets status
+  `cancelled`; the pipeline chain aborts (later stages don't run). Because the
+  in-flight offer already committed, **no work is wasted and re-pressing resumes
+  for free** (same idempotency as the fail-resume path) — so "Stop now, re-run
+  later" *is* pause, with no held run state. Granularity is one offer; a hung LLM
+  call still needs a hard `Ctrl+C`. The **Stop** button lives in the status
+  fragment (visible only while `running`), so it appears/disappears with the poll.
+  The cancel Event is cleared on the next `enqueue`, so a stale Stop can't poison
+  a later run. Route ordering matters: `/runs/cancel` is declared **before** the
+  `/runs/{stage}` catch-all, else "cancel" is captured as a stage name → 404.
 - **Crash phantoms.** The `runs` ledger's `finished_at IS NULL` is *not* a
   reliable "running now" signal (a hard-killed process leaves it forever). The UI
   reads the in-process `runner.snapshot()` for live status; the ledger stays
@@ -228,8 +241,8 @@ the worker). `--reload` uses uvicorn's own supervisor, whose child handles Ctrl+
   locally-vendored map + offline tiles (office coords only) in a later pass.
 - **Multi-stage ATS** (Applied → Phone → Interview → Offer): V2 tracking is the
   simple three-state set only.
-- **Live log streaming** and **run cancellation:** the status fragment polls for
-  a progress bar; there is no per-line log and no cancel hook in the `run_*` loops.
+- **Live log streaming:** the status fragment polls for a progress bar; there is
+  no per-line log stream. (Run **cancellation** shipped — see the runner section.)
 - **Dedicated LLM posting summary:** the summary reuses existing
   scorer/company-brief output (no extra model call).
 

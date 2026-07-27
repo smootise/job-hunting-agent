@@ -118,6 +118,10 @@ def main() -> None:
         time.sleep(0.5)
         check("GET /runs/status", tc.get("/runs/status").status_code == 200)
 
+        # Cancel is a same-origin no-op when idle; returns the status fragment.
+        check("POST /runs/cancel (idle no-op)",
+              tc.post("/runs/cancel").status_code == 200)
+
         # Guards.
         check("unknown per-offer stage -> 404",
               tc.post(f"/offers/{jid}/runs/nonsense").status_code == 404)

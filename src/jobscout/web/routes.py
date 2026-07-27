@@ -198,6 +198,26 @@ def set_review(
 
 
 @router.post(
+    "/runs/cancel",
+    response_class=HTMLResponse,
+    dependencies=[Depends(require_local_origin)],
+)
+def cancel_run(
+    request: Request, conn: sqlite3.Connection = Depends(get_conn)
+) -> HTMLResponse:
+    """Request cancellation of the active run; return the status fragment.
+
+    Declared BEFORE ``/runs/{stage}`` so "cancel" isn't captured as a stage name.
+    Cooperative: the running stage stops after its current offer commits, then the
+    chain aborts. Re-running resumes for free. A no-op if nothing is running.
+    """
+    request.app.state.runner.cancel()
+    return _templates(request).TemplateResponse(
+        request, "runs/_status.html", _run_status_context(request, conn)
+    )
+
+
+@router.post(
     "/runs/{stage}",
     response_class=HTMLResponse,
     dependencies=[Depends(require_local_origin)],

@@ -83,7 +83,7 @@ class JobState:
     """
 
     stage: str | None = None
-    status: str = "idle"  # 'idle' | 'running' | 'done' | 'failed'
+    status: str = "idle"  # 'idle' | 'running' | 'done' | 'failed' | 'cancelled'
     done: int = 0
     total: int = 0
     summary: dict | None = None
@@ -105,6 +105,17 @@ class RunnerBusy(Exception):
     """Raised by ``enqueue`` when a job is already running/queued (single-flight)."""
 
 
+class RunCancelled(Exception):
+    """Raised inside a stage's progress callback when a cancel was requested.
+
+    Cooperative cancel: the ``progress`` closure checks the cancel Event once per
+    offer (after that offer has committed) and raises this. It unwinds through the
+    stage's ``finally`` (commit + record_run_finish), so the in-flight offer's work
+    is never wasted and the next run resumes for free (idempotency). Granularity is
+    one offer; a hung LLM call still needs a hard ``Ctrl+C``.
+    """
+
+
 class JobRunner:
     """Owns the worker thread, the queue, and the shared job state.
 
@@ -117,6 +128,7 @@ class JobRunner:
         self._settings = settings
         self._queue: queue.Queue[_Job | None] = queue.Queue()
         self._lock = threading.Lock()
+        self._cancel = threading.Event()
         self._state = JobState()
         self._thread: threading.Thread | None = None
         self._registry = registry if registry is not None else self._default_registry()
@@ -158,7 +170,18 @@ class JobRunner:
         with self._lock:
             if self._state.status == "running" or not self._queue.empty():
                 raise RunnerBusy("a run is already in progress")
+        self._cancel.clear()  # fresh run: discard any stale cancel request
         self._queue.put(job)
+
+    def cancel(self) -> None:
+        """Request cancellation of the active run (cooperative, no-op if idle).
+
+        Sets the cancel Event; the running stage's ``progress`` closure sees it at
+        the next offer boundary and raises ``RunCancelled``, which the worker turns
+        into a ``cancelled`` status. Safe to call when idle — the flag is cleared
+        again the next time a job is enqueued.
+        """
+        self._cancel.set()
 
     def snapshot(self) -> JobState:
         """A copy of the current state, safe to read outside the lock."""
@@ -195,6 +218,15 @@ class JobRunner:
                 self._state.total = 0
             try:
                 last_summary = self._run_stage(stage, job_id=job.job_id)
+            except RunCancelled:
+                # Owner pressed Stop. The current offer already committed; abort the
+                # whole chain here (later stages don't run). Re-running resumes for
+                # free — completed offers/stages are gated out by DB state.
+                logger.info("runner: run cancelled during stage %s", stage)
+                with self._lock:
+                    self._state.status = "cancelled"
+                    self._state.finished_at = _utcnow()
+                return
             except Exception as exc:  # noqa: BLE001 — a HARD stage failure.
                 # A stage that *raises* (missing key, unreachable service) halts
                 # the chain. Per-row fail-soft never reaches here (those stages
@@ -219,6 +251,10 @@ class JobRunner:
             with self._lock:
                 self._state.done = done
                 self._state.total = total
+            # Cancel checkpoint: this fires once per offer, after that offer has
+            # committed, so raising here never wastes in-flight work.
+            if self._cancel.is_set():
+                raise RunCancelled
 
         summary = thunk(job_id=job_id, on_progress=progress)
         # Summaries are dataclasses; normalize to a plain dict for the template.

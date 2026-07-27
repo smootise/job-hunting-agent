@@ -191,3 +191,92 @@ def test_unknown_stage_raises(settings):
             r.enqueue("nope")
     finally:
         r.stop()
+
+
+def test_cancel_mid_run_stops_after_current_offer(settings):
+    """Cancel during a stage: it stops at the next offer boundary, completed
+    offers persist, status is 'cancelled', and a re-run finishes the rest."""
+    at_offer_1 = threading.Event()
+    resume = threading.Event()
+    done_offers = []
+
+    def fake(*, job_id=None, on_progress=None):
+        total = 5
+        # Resume from wherever a prior run stopped (idempotency stand-in).
+        start = len(done_offers) + 1
+        for i in range(start, total + 1):
+            done_offers.append(i)  # this offer's work "commits" before progress
+            on_progress(i, total)
+            if i == 1:
+                at_offer_1.set()
+                resume.wait(timeout=2.0)  # hold so the test can cancel mid-loop
+        return {"considered": total, "done": len(done_offers)}
+
+    r = _runner(settings, {"fake": fake})
+    try:
+        r.enqueue("fake")
+        assert at_offer_1.wait(timeout=2.0)  # offer 1 committed, loop parked
+        r.cancel()
+        resume.set()  # let the loop advance and hit the cancel checkpoint
+        assert _wait_until(lambda: r.snapshot().status == "cancelled")
+        s = r.snapshot()
+        # Stopped early — not all 5 offers ran. Granularity is one offer, so the
+        # exact stop point (1 or 2) depends on the race with resume; the invariant
+        # is that it aborted before finishing and progress was preserved.
+        assert 1 <= s.done < 5 and s.total == 5
+        stopped_at = len(done_offers)
+        assert stopped_at == s.done
+
+        # Re-run resumes from where it stopped: the rest finish, status 'done'.
+        r.enqueue("fake")
+        assert _wait_until(lambda: r.snapshot().status == "done")
+        assert done_offers == [1, 2, 3, 4, 5]
+    finally:
+        r.stop()
+
+
+def test_cancel_when_idle_is_noop(settings):
+    r = _runner(settings, {"fake": lambda **k: {}})
+    try:
+        r.cancel()  # nothing running
+        assert r.snapshot().status == "idle"
+        # The stale cancel must not poison the next run.
+        r.enqueue("fake")
+        assert _wait_until(lambda: r.snapshot().status == "done")
+    finally:
+        r.stop()
+
+
+def test_cancel_aborts_whole_chain(settings):
+    """A cancel during an early chain stage does not run later stages."""
+    at_a = threading.Event()
+    resume = threading.Event()
+    ran = {"b": False}
+
+    def a(*, job_id=None, on_progress=None):
+        on_progress(1, 2)
+        at_a.set()
+        resume.wait(timeout=2.0)
+        on_progress(2, 2)  # cancel checkpoint fires here
+        return {}
+
+    def b(*, job_id=None, on_progress=None):
+        ran["b"] = True
+        return {}
+
+    import jobscout.web.runner as rn
+    orig = rn.PIPELINE_ORDER
+    rn.PIPELINE_ORDER = ("a", "b")
+    try:
+        r = _runner(settings, {"a": a, "b": b})
+        try:
+            r.enqueue("pipeline")
+            assert at_a.wait(timeout=2.0)
+            r.cancel()
+            resume.set()
+            assert _wait_until(lambda: r.snapshot().status == "cancelled")
+            assert ran["b"] is False  # later stage never ran
+        finally:
+            r.stop()
+    finally:
+        rn.PIPELINE_ORDER = orig
