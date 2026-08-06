@@ -201,9 +201,25 @@ progress callback wired in.
   commute-only button, each `hx-post`-ing to `/runs/*` and swapping the
   self-polling status fragment).
 - **Offer list** — score / title / company / source / status badges / **review
-  badge** / commute + remote chip / red-flag count. Sortable by the overall score
-  **or any single rubric criterion** via the sort dropdown, plus
-  status/source/**disposition** filters — all HTMX partial swaps.
+  badge** / commute + remote chip / red-flag count. Sortable by overall score,
+  commute, **posted date**, **recently-ingested (`first_seen_at`)**, title,
+  company, **or any single rubric criterion** via the sort dropdown. Filters:
+  **status**, **source**, **score status**, **disposition**, and a **"posted
+  on/after" date picker** — all HTMX partial swaps.
+  - **Date filter + undated offers.** LinkedIn offers carry **no `posted_at`**
+    (~1/3 of the table). By default the date filter *keeps* undated offers
+    (`include_undated`, `queries.list_jobs`: `posted_at >= ? OR posted_at IS NULL`)
+    so they're never silently dropped; a **"hide undated"** checkbox opts into the
+    strict view. The picker **defaults to the last 30 days** so old (likely closed)
+    postings are hidden on first load. The route validates the date shape (bad
+    date → **400**, not a silent empty list) and echoes every control into
+    `active` so the pushed URL round-trips.
+  - **Status default hides rejected.** `/offers` defaults to **active only**
+    (`passed` + `needs_review`, via `list_jobs(statuses=...)`); the Status dropdown
+    distinguishes this default (`""`) from an explicit **"All (incl. rejected)"**
+    (`"all"`) and single-status options. A **Clear filters** link resets to the
+    default; a `section-note` states the defaults so a narrowed view is never
+    mistaken for an empty DB.
 - **Offer detail** — a **My review** card (V2: the disposition + notes control
   that POSTs and swaps itself back) and a **"Run a step on this offer"** panel
   (V2: re-run any applicable stage on just this offer — filter / enrich-linkedin /

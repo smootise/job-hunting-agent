@@ -120,7 +120,8 @@ tbody tr:last-child td { border-bottom: none; }
 /* Filter form ------------------------------------------------------- */
 .filters { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: end; margin-bottom: 1rem; }
 .filters label { display: flex; flex-direction: column; font-size: 0.78rem; color: var(--text-muted); gap: 0.2rem; }
-.filters select {
+.filters select,
+.filters input[type="date"] {
   padding: 0.4rem 0.5rem;
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -128,6 +129,9 @@ tbody tr:last-child td { border-bottom: none; }
   color: var(--text);
   font-size: 0.9rem;
 }
+/* The "hide undated" checkbox reads as a horizontal row, not a stacked label. */
+.filters label.check { flex-direction: row; align-items: center; gap: 0.35rem; font-size: 0.85rem; }
+.filters .clear-filters { align-self: end; font-size: 0.82rem; padding-bottom: 0.5rem; }
 
 /* Detail page ------------------------------------------------------- */
 .detail-head { display: flex; justify-content: space-between; align-items: start; gap: 1rem; flex-wrap: wrap; }
