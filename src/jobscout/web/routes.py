@@ -11,6 +11,7 @@ same pipeline code the CLI does — no new external actions, no email.
 
 from __future__ import annotations
 
+import datetime as _dt
 import sqlite3
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -27,6 +28,45 @@ router = APIRouter()
 
 # The offer sources, for the list-page filter dropdown.
 _SOURCES = ("wttj", "france_travail", "linkedin_email")
+
+# Score-status filter options (value → label) for the list dropdown.
+_SCORE_STATUSES = (
+    ("scored", "Scored"),
+    ("needs_review", "Score needs review"),
+)
+
+# The "active" offers (not yet rejected) — the default list view. The Status
+# control adds an explicit "all" (incl. rejected) and single-status options.
+_ACTIVE_STATUSES = ("passed", "needs_review")
+
+# Sentinel status-filter value meaning "show everything, including rejected" —
+# distinct from the default (no param → active only) and from a single status.
+_STATUS_ALL = "all"
+
+# How far back the "posted on/after" picker defaults to, so old (likely closed)
+# postings are hidden on first load without a manual pick.
+_DEFAULT_POSTED_WINDOW = _dt.timedelta(days=30)
+
+
+def _default_posted_after() -> str:
+    """The default 'posted on/after' bound: today minus the window, ISO date."""
+    return (_dt.date.today() - _DEFAULT_POSTED_WINDOW).isoformat()
+
+
+def _validate_iso_date(value: str) -> str:
+    """Return ``value`` if it's a valid ISO ``YYYY-MM-DD`` date, else raise 400.
+
+    The date arrives from an HTTP query string and is compared against
+    ``posted_at`` in SQL. Though ``list_jobs`` parameterizes it (so it's not an
+    injection vector), we still reject a malformed value loudly rather than let a
+    garbage bound silently match nothing — same 'no silent drift' stance as the
+    sort guard.
+    """
+    try:
+        _dt.date.fromisoformat(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"invalid date: {value!r}") from exc
+    return value
 
 # The disposition options offered in the list filter (value → label). The three
 # real dispositions plus the "unreviewed" sentinel (queries.UNREVIEWED).
@@ -84,18 +124,43 @@ def _list_context(request: Request, conn: sqlite3.Connection) -> dict:
     and hydrates the rows so the template reads parsed JSON.
     """
     params = request.query_params
-    filter_status = params.get("filter_status") or None
     source = params.get("source") or None
+    score_status = params.get("score_status") or None
     disposition = params.get("disposition") or None
     order_by = params.get("sort") or "score_total"
     descending = params.get("dir", "desc") != "asc"
+
+    # Status: the dropdown submits "" (default → active only, hide rejected),
+    # "all" (everything incl. rejected), or a single status. Absent == "" == default.
+    status_sel = params.get("filter_status") or ""
+    if status_sel == _STATUS_ALL:
+        filter_status, statuses = None, None            # no status filter
+    elif status_sel in ("passed", "needs_review", "rejected"):
+        filter_status, statuses = status_sel, None      # one status
+    else:
+        filter_status, statuses = None, _ACTIVE_STATUSES  # default: active only
+
+    # Date: absent → 30-day default; present-but-empty → user cleared it (no bound);
+    # present with a value → validate. "hide_undated" checkbox flips include_undated.
+    raw_posted = params.get("posted_after")
+    if raw_posted is None:
+        posted_after = _default_posted_after()
+    elif raw_posted == "":
+        posted_after = None
+    else:
+        posted_after = _validate_iso_date(raw_posted)
+    hide_undated = params.get("hide_undated") in ("on", "true", "1")
 
     try:
         rows = queries.list_jobs(
             conn,
             filter_status=filter_status,
+            statuses=statuses,
             source=source,
+            score_status=score_status,
             disposition=disposition,
+            posted_after=posted_after,
+            include_undated=not hide_undated,
             order_by=order_by,
             descending=descending,
             criteria_names=_criteria_names(request),
@@ -103,16 +168,28 @@ def _list_context(request: Request, conn: sqlite3.Connection) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Whether any control departs from the default view (drives a "Clear filters"
+    # affordance + makes a narrow view unmistakable for an empty DB).
+    is_default = (
+        status_sel == "" and source is None and score_status is None
+        and disposition is None and raw_posted is None and not hide_undated
+    )
+
     return {
         "jobs": [queries.hydrate_job(r) for r in rows],
         "criteria": _criteria(request),
         "sources": _SOURCES,
         "disposition_filters": _DISPOSITION_FILTERS,
+        "score_statuses": _SCORE_STATUSES,
+        "is_default_view": is_default,
         # Echo the active controls back so the form/links stay in sync.
         "active": {
-            "filter_status": filter_status,
+            "filter_status": status_sel,
             "source": source,
+            "score_status": score_status,
             "disposition": disposition,
+            "posted_after": posted_after or "",
+            "hide_undated": hide_undated,
             "sort": order_by,
             "dir": "asc" if not descending else "desc",
         },

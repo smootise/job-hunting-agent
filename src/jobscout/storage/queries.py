@@ -123,9 +123,12 @@ def list_jobs(
     conn: sqlite3.Connection,
     *,
     filter_status: str | None = None,
+    statuses: tuple[str, ...] | None = None,
     source: str | None = None,
     score_status: str | None = None,
     disposition: str | None = None,
+    posted_after: str | None = None,
+    include_undated: bool = True,
     order_by: str = "score_total",
     descending: bool = True,
     limit: int | None = None,
@@ -137,6 +140,19 @@ def list_jobs(
     Filters (``filter_status``, ``source``, ``score_status``, ``disposition``) are
     exact-match and parameterized; a None filter is simply omitted. ``disposition``
     also accepts the ``UNREVIEWED`` sentinel → offers with no review row.
+
+    ``statuses`` is a multi-value alternative to ``filter_status`` (``IN (...)``),
+    used for the "active only" default view (passed + needs_review). Pass one or
+    the other, not both.
+
+    ``posted_after`` (an ISO date string, e.g. ``"2026-07-07"``) keeps offers with
+    ``posted_at >= posted_after``. Because LinkedIn offers carry **no** ``posted_at``
+    (it's NULL for ~1/3 of the table), ``include_undated`` (default True) decides
+    their fate: True keeps undated offers regardless of the date bound (never
+    silently dropped — the project's core rule); False excludes them. Comparison is
+    lexical over ISO-8601 strings, which is correct for date ordering; the caller
+    (route) is responsible for validating the date's shape.
+
     ``order_by`` accepts a plain allowlisted column or the ``criteria:<name>`` form
     (see ``_order_by_clause``); ``criteria_names`` is the set of valid rubric
     criteria — required only when sorting by a criterion.
@@ -151,6 +167,18 @@ def list_jobs(
     if filter_status is not None:
         where.append("jobs.filter_status = ?")
         params.append(filter_status)
+    if statuses:
+        placeholders = ", ".join("?" for _ in statuses)
+        where.append(f"jobs.filter_status IN ({placeholders})")
+        params.extend(statuses)
+    if posted_after is not None:
+        if include_undated:
+            # Keep dated offers on/after the bound, PLUS all undated (NULL) offers —
+            # never silently drop the ~1/3 of the table (LinkedIn) with no post date.
+            where.append("(jobs.posted_at >= ? OR jobs.posted_at IS NULL)")
+        else:
+            where.append("jobs.posted_at >= ?")
+        params.append(posted_after)
     if source is not None:
         where.append("jobs.source = ?")
         params.append(source)

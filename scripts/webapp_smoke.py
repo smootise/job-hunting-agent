@@ -59,9 +59,19 @@ def _seed(db_path: Path) -> int:
         salary_text=None, description="A PM role for the smoke test.",
         posted_at=None, lang="en",
     )
-    db.upsert_jobs(conn, [job])
+    # A second, clearly-OLD dated offer, to exercise the posted_after filter.
+    old_job = JobRecord(
+        source="france_travail", external_id="smoke-old",
+        url="https://example.test/job/old", title="Legacy Product Manager",
+        company="OldCorp", location="Paris", contract_type="CDI",
+        salary_text=None, description="An old posting.",
+        posted_at="2020-01-01T00:00:00Z", lang="en",
+    )
+    db.upsert_jobs(conn, [job, old_job])
     jid = conn.execute("SELECT id FROM jobs WHERE external_id='smoke-1'").fetchone()["id"]
+    old_id = conn.execute("SELECT id FROM jobs WHERE external_id='smoke-old'").fetchone()["id"]
     db.record_filter_verdict(conn, jid, filter_status="passed", filter_reasons_json="[]")
+    db.record_filter_verdict(conn, old_id, filter_status="passed", filter_reasons_json="[]")
     db.record_score(
         conn, jid, score_total=77.0, score_status="scored",
         score_json=json.dumps({
@@ -92,7 +102,27 @@ def main() -> None:
         check("GET / (dashboard)", tc.get("/").status_code == 200)
 
         r = tc.get("/offers")
-        check("GET /offers", r.status_code == 200 and "SmokeCorp" in r.text)
+        # Default view: 30-day window hides the 2020 offer; the undated one shows.
+        check("GET /offers (default hides old, keeps undated)",
+              r.status_code == 200 and "SmokeCorp" in r.text and "OldCorp" not in r.text)
+
+        # Explicit early date shows the old offer again.
+        r = tc.get("/offers/table?posted_after=2019-01-01")
+        check("posted_after=2019 shows the old offer",
+              r.status_code == 200 and "OldCorp" in r.text and "SmokeCorp" in r.text)
+
+        # Hide-undated drops the null-posted_at offer even with an early date.
+        r = tc.get("/offers/table?posted_after=2019-01-01&hide_undated=on")
+        check("hide_undated drops the undated offer",
+              r.status_code == 200 and "OldCorp" in r.text and "SmokeCorp" not in r.text)
+
+        # A malformed date is a 400, not a silent empty list.
+        check("bad posted_after -> 400",
+              tc.get("/offers/table?posted_after=notadate").status_code == 400)
+
+        # New sort keys are accepted.
+        check("sort=first_seen_at ok",
+              tc.get("/offers/table?sort=first_seen_at").status_code == 200)
 
         r = tc.get("/offers/table?sort=score_total&dir=desc")
         check("GET /offers/table (sorted fragment)",
