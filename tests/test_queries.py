@@ -116,6 +116,54 @@ def test_unknown_sort_key_raises(tmp_path):
         queries.list_jobs(conn, order_by="criteria:not_a_criterion", criteria_names=CRITERIA)
 
 
+def test_posted_after_filters_dated_and_keeps_undated_by_default(tmp_path):
+    # a: old (2026-01-01), b: recent (2026-08-01), c: undated (NULL posted_at).
+    conn = _seed(tmp_path / "j.db", [
+        _job(external_id="a", posted_at="2026-01-01T00:00:00Z"),
+        _job(external_id="b", posted_at="2026-08-01T00:00:00Z"),
+        _job(external_id="c", posted_at=None),
+    ])
+    rows = queries.list_jobs(conn, posted_after="2026-07-01")
+    ids = {r["external_id"] for r in rows}
+    assert ids == {"b", "c"}  # old 'a' dropped; undated 'c' kept (never silently dropped)
+
+
+def test_posted_after_hide_undated_excludes_null(tmp_path):
+    conn = _seed(tmp_path / "j.db", [
+        _job(external_id="a", posted_at="2026-01-01T00:00:00Z"),
+        _job(external_id="b", posted_at="2026-08-01T00:00:00Z"),
+        _job(external_id="c", posted_at=None),
+    ])
+    rows = queries.list_jobs(conn, posted_after="2026-07-01", include_undated=False)
+    assert {r["external_id"] for r in rows} == {"b"}  # 'c' now excluded too
+
+
+def _seed_statuses(db_path):
+    """Seed three offers with distinct filter_status verdicts."""
+    conn = db.connect(db_path)
+    jobs = [_job(external_id="p"), _job(external_id="n"), _job(external_id="x")]
+    db.upsert_jobs(conn, jobs)
+    verdicts = {"p": "passed", "n": "needs_review", "x": "rejected"}
+    for job in jobs:
+        row = conn.execute("SELECT id FROM jobs WHERE external_id=?", (job.external_id,)).fetchone()
+        db.record_filter_verdict(conn, row["id"], filter_status=verdicts[job.external_id],
+                                 filter_reasons_json="[]")
+    conn.commit()
+    return conn
+
+
+def test_statuses_multi_value_hides_rejected(tmp_path):
+    conn = _seed_statuses(tmp_path / "j.db")
+    rows = queries.list_jobs(conn, statuses=("passed", "needs_review"))
+    assert {r["external_id"] for r in rows} == {"p", "n"}  # rejected 'x' hidden
+
+
+def test_no_status_filter_shows_all(tmp_path):
+    conn = _seed_statuses(tmp_path / "j.db")
+    rows = queries.list_jobs(conn)  # neither filter_status nor statuses
+    assert {r["external_id"] for r in rows} == {"p", "n", "x"}
+
+
 def test_parse_json_column():
     assert queries.parse_json_column(None, {}) == {}
     assert queries.parse_json_column("not json{", []) == []
