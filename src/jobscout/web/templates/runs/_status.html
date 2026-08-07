@@ -21,6 +21,19 @@
     <div class="meter">
       <span style="width: {{ (100 * runner_state.done / runner_state.total) if runner_state.total else 0 }}%"></span>
     </div>
+    {# Stop: cooperative cancel. Aborts after the current offer commits; re-run resumes. #}
+    <button hx-post="/runs/cancel" hx-target="#run-status" hx-swap="outerHTML"
+            class="btn-danger">Stop</button>
+
+  {% elif runner_state.status == 'cancelled' %}
+    <div class="run-line">
+      <span class="badge badge--warn">stopped</span>
+      <strong>{{ runner_state.stage }}</strong>
+      {% if runner_state.total %}
+        <span class="num">after {{ runner_state.done }} / {{ runner_state.total }}</span>
+      {% endif %}
+    </div>
+    <p class="section-note">Stopped by request — re-run to resume where it left off.</p>
 
   {% elif runner_state.status == 'failed' %}
     <div class="run-line">
