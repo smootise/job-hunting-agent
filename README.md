@@ -152,7 +152,8 @@ score breakdown, commute detail, company brief + original posting). It also
 notes) and **runs pipeline stages from the UI** — any stage or the whole pipeline
 from the dashboard, or any applicable stage on a single offer from its detail page
 (re-search an address, re-route a commute, rescore) — via a background runner with
-a progress bar.
+a progress bar and a **Stop** button that cancels an in-progress run cleanly (the
+next run resumes where it left off — handy for freeing the GPU mid-run).
 
 ```
 uv run jobscout serve                 # → http://127.0.0.1:8020  (Ctrl+C to stop)
@@ -164,7 +165,10 @@ FastAPI + HTMX, no build step, no CDN (htmx is vendored locally). The run button
 execute the **same** pipeline code the CLI does — nothing new leaves the machine,
 no email. Write routes are same-origin-guarded; the server binds `127.0.0.1`
 only. The offer list sorts by the overall score or any individual rubric
-criterion (best culture fit, best commute fit, …). See `docs/webapp.md`.
+criterion (best culture fit, best commute fit, …), and filters by a **posted-date
+picker** (defaults to the last 30 days; undated LinkedIn offers are shown unless
+you hide them, never silently dropped) — the default view also hides rejected
+offers. See `docs/webapp.md`.
 
 ## Tests
 
