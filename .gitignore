@@ -4,6 +4,12 @@ preferences.yaml
 profile/*
 !profile/README.md
 
+# Sent cover letters are the owner's real career history. The *postings* they
+# answer stay tracked (tests/test_normalize.py reads them, and they're not
+# personal); the letters are local-only. The bake-off skips letter adaptation
+# when they're absent — see scripts/bakeoff/README.md.
+samples/*_cover_letter_*.txt
+
 # Real captured emails contain personal addresses — keep local. Tests run
 # against a scrubbed synthetic .eml that IS committed (see tests/fixtures).
 tests/fixtures/*.eml

@@ -13,11 +13,16 @@ personal material that never gets committed:
 
 ## Seeding the masters from your sent letters
 
-`samples/` (tracked, not personal — see its own contents) has two real
-posting + sent-letter pairs: NEXTON (FR) and Dataiku (EN). Both letters
-already read like a master letter adapted to one posting. A reasonable
-starting point for `master_letter_fr.md` / `master_letter_en.md` is to
-take the matching sample letter and strip out the posting-specific
-sentences, leaving the generic background, the recurring project hook,
-and the closing — see `scripts/bakeoff/README.md` for how these masters
+`samples/` holds two real postings — NEXTON (FR) and Dataiku (EN) —
+which are tracked, since they're public job ads rather than personal
+material. The **sent letters** that answered them are gitignored for the
+same reason everything in this directory is: they're the owner's real
+career history.
+
+If you have letters you've sent, a reasonable starting point for
+`master_letter_fr.md` / `master_letter_en.md` is to take one and strip
+out the posting-specific sentences, leaving the generic background, the
+recurring project hook, and the closing. Otherwise just write the
+masters directly — the pipeline only ever adapts them, never writes a
+letter from scratch. See `scripts/bakeoff/README.md` for how the masters
 get exercised in the model bake-off.

@@ -10,9 +10,14 @@ Candidates (edit `CANDIDATE_MODELS` in `_common.py` if this changes):
 Ollama tag to the brief's "Mistral Small 4" at build time — re-check for
 a newer tag before relying on this).
 
-Test data: the two real posting + sent-letter pairs in `samples/`
-(NEXTON, French; Dataiku, English) — these are jobs the owner actually
-applied to, so the sent letter is a genuine quality bar, not a fixture.
+Test data: the two real postings in `samples/` (NEXTON, French; Dataiku,
+English) — jobs the owner actually applied to, not synthetic fixtures.
+The **sent letters** that answered them are personal career history and
+are gitignored, so a fresh clone has the postings but not the letters:
+harness 1 (JSON reliability) needs only the postings and runs as-is;
+harness 2 (letter adaptation) judges drafts against a sent letter and
+skips any sample missing one. To run harness 2, drop your own letters in
+as `samples/<Company>_cover_letter_<LANG>.txt`.
 
 ## 1. JSON / schema reliability
 
@@ -33,9 +38,11 @@ harness bug.
 
 ## 2. Letter-adaptation prose quality
 
-Requires master letters first — see `profile/README.md` for how to seed
-`profile/master_letter_fr.md` and `profile/master_letter_en.md` from the
-`samples/` letters (strip the posting-specific sentences, keep the rest).
+Requires master letters first (`profile/master_letter_fr.md` and
+`profile/master_letter_en.md` — see `profile/README.md`), plus at least
+one sent letter in `samples/` to compare drafts against. Both are
+gitignored personal material; with neither present this harness prints
+what's missing and exits.
 
 ```
 uv run python scripts/bakeoff/letter_adaptation.py

@@ -98,6 +98,7 @@ Restate these to yourself before implementing any LLM-touching code.
 - **Cover-letter agent:** read-only fetch (per-job domain whitelist) + one sandboxed write. Worst case = a bad draft, caught at human review.
 - **Home address:** stored only in local gitignored config; sent to exactly one external service (the transit routing API); **never appears in any LLM prompt, log line, letter, or digest** — those reference commute *minutes* only.
 - **Secrets** in `.env` (gitignored) or OS keyring — never in code, never committed. Provide `.env.example`. Email = read-only IMAP via app-specific password, scoped to the LinkedIn-alerts folder.
+- **The repo is public (MIT).** Personal material is gitignored, not tracked: `.env`, `preferences.yaml`, `profile/*`, real `.eml` captures, and the **sent cover letters** (`samples/*_cover_letter_*.txt` — the job *postings* they answer stay tracked; `tests/test_normalize.py` reads them). Before adding a file under `samples/` or `tests/fixtures/`, ask whether it carries the owner's career history or contact details; if so, gitignore it and make the consumer degrade gracefully when it's absent.
 - **Hard caps everywhere:** max agent steps, max fetches per job, max jobs per run, request timeouts.
 
 ---

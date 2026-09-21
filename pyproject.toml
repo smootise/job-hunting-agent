@@ -6,6 +6,8 @@ readme = "README.md"
 authors = [
     { name = "dahan_t", email = "thibauddahan@yahoo.fr" }
 ]
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.28.1",
