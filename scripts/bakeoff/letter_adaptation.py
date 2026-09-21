@@ -8,7 +8,9 @@ personally — the brief is explicit that benchmarks vote, the owner
 decides. There is deliberately no automated judge here.
 
 Requires profile/master_letter_fr.md and profile/master_letter_en.md to
-exist (see profile/README.md for how to seed them from samples/).
+exist (see profile/README.md), plus at least one sent letter in samples/.
+Both are personal and gitignored, so a fresh clone has neither — this
+harness is the owner's model-selection tool, not a repo smoke test.
 
 Usage: uv run python scripts/bakeoff/letter_adaptation.py
 """
@@ -39,7 +41,17 @@ def build_prompt(master_letter: str, posting: str) -> str:
 
 
 def main() -> None:
-    samples = load_samples()
+    # require_letters: this harness judges drafts against the letter actually
+    # sent, so a sample without one has nothing to compare against.
+    samples = load_samples(require_letters=True)
+    if not samples:
+        print(
+            "No posting/sent-letter pairs found. The sent letters are personal "
+            "and gitignored — drop your own into samples/ as "
+            "<Company>_cover_letter_<LANG>.txt alongside the tracked postings. "
+            "See scripts/bakeoff/README.md."
+        )
+        return
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     masters: dict[str, str] = {}
@@ -64,7 +76,7 @@ def main() -> None:
             draft_path.write_text(result.response.strip(), encoding="utf-8")
 
             reference_path = OUTPUT_DIR / f"REFERENCE_{sample.company}_{sample.lang}_sent.md"
-            if not reference_path.exists():
+            if sample.sent_letter and not reference_path.exists():
                 reference_path.write_text(sample.sent_letter, encoding="utf-8")
 
     print(f"\nDrafts written to {OUTPUT_DIR} (REFERENCE_*.md = the letter actually sent).")

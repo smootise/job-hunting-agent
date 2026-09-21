@@ -26,16 +26,26 @@ CANDIDATE_MODELS = ["qwen3.6:35b-a3b", "gemma4:31b", "mistral-small3.2:latest"]
 
 @dataclass(frozen=True)
 class PostingSample:
-    """One real posting + the letter the owner actually sent for it."""
+    """One real posting, plus the letter the owner sent for it when available.
+
+    ``sent_letter`` is ``None`` when the letter file isn't present: the
+    postings are tracked in git, but the sent letters are personal career
+    history and gitignored (see .gitignore). Scoring only needs the posting;
+    only letter adaptation needs the letter.
+    """
 
     company: str
     lang: str  # "fr" | "en"
     posting: str
-    sent_letter: str
+    sent_letter: str | None
 
 
-def load_samples() -> list[PostingSample]:
-    """Load the posting/sent-letter pairs tracked in samples/."""
+def load_samples(*, require_letters: bool = False) -> list[PostingSample]:
+    """Load the postings in samples/, pairing each with its sent letter if present.
+
+    Pass ``require_letters=True`` (letter adaptation) to skip samples whose
+    letter is missing rather than yield a sample that can't be adapted.
+    """
     pairs = [
         ("NEXTON", "fr", "NEXTON_posting_FR.txt", "NEXTON_cover_letter_FR.txt"),
         ("Dataiku", "en", "Dataiku_posting_EN.txt", "Dataiku_cover_letter_EN.txt"),
@@ -43,7 +53,12 @@ def load_samples() -> list[PostingSample]:
     samples = []
     for company, lang, posting_file, letter_file in pairs:
         posting = (SAMPLES_DIR / posting_file).read_text(encoding="utf-8")
-        sent_letter = (SAMPLES_DIR / letter_file).read_text(encoding="utf-8")
+        letter_path = SAMPLES_DIR / letter_file
+        sent_letter = (
+            letter_path.read_text(encoding="utf-8") if letter_path.exists() else None
+        )
+        if sent_letter is None and require_letters:
+            continue
         samples.append(PostingSample(company, lang, posting, sent_letter))
     return samples
 
