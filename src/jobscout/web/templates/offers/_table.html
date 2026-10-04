@@ -9,6 +9,7 @@
         <th>Title</th>
         <th>Company</th>
         <th>Source</th>
+        <th>Added</th>
         <th>Status</th>
         <th>Review</th>
         <th>Commute</th>
@@ -25,6 +26,16 @@
         <td><a href="/offers/{{ job.id }}">{{ job.title }}</a></td>
         <td>{{ job.company }}</td>
         <td><span class="chip">{{ job.source }}</span></td>
+        {# Ingestion date, plus a "new" pill when the row came from the latest
+           ingest run — so the freshest batch stays identifiable even in an
+           unfiltered list. String compare is safe: both are ISO-8601 UTC. #}
+        {# Relative time for scanning, exact dd/mm/yyyy date on hover. #}
+        <td class="nowrap" title="{{ job.first_seen_at | eudate }}">
+          {{ job.first_seen_at | reltime }}
+          {% if last_ingest and job.first_seen_at and job.first_seen_at >= last_ingest.started_at %}
+          <span class="badge badge--new">new</span>
+          {% endif %}
+        </td>
         <td>
           {% if job.filter_status %}<span class="badge {{ job.filter_status | badge_class }}">{{ job.filter_status | replace('_', ' ') }}</span>{% endif %}
           {% if job.score_status == 'needs_review' %}<span class="badge badge--warn">score?</span>{% endif %}
@@ -45,5 +56,14 @@
 </div>
 <p class="section-note">{{ jobs | length }} offer{{ 's' if jobs | length != 1 }}.</p>
 {% else %}
+{# An ingest run that adds nothing is normal (every source returns only
+   already-known offers), so say that plainly instead of implying the filters
+   are at fault. #}
+{% if showing_new and last_ingest %}
+<p class="empty">
+  The last ingest run ({{ last_ingest.started_at | reltime }}) added no new offers.
+</p>
+{% else %}
 <p class="empty">No offers match these filters.</p>
+{% endif %}
 {% endif %}

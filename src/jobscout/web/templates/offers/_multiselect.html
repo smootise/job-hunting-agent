@@ -1,0 +1,47 @@
+{# A checkbox dropdown: a summary button showing the current selection, which
+   opens a list of single-click checkboxes.
+
+   Native <select multiple> needs ctrl/cmd-click to pick more than one and shows
+   a scrolling highlight list; this reads the way a filter should. Built on
+   <details>/<summary> so open/close is browser-native — no JavaScript, matching
+   the project's "transparency over magic" rule. The checkboxes are ordinary form
+   fields named `name`, so they submit exactly like the old <select multiple>
+   (repeated params) and the htmx form trigger picks them up unchanged.
+
+   Params:
+     name     – form field name (also the param the route reads)
+     label    – visible control label
+     options  – sequence of (value, text) pairs
+     selected – list of currently-chosen values
+     empty    – summary text when nothing is chosen (default "All")
+#}
+{% macro multiselect(name, label, options, selected, empty="All") %}
+<div class="ms">
+  <span class="ms-label">{{ label }}</span>
+  <details class="ms-drop">
+    {# The summary names what's chosen, so a collapsed filter bar still tells you
+       the whole active filter state without opening anything. #}
+    <summary>
+      <span class="ms-summary">
+        {%- if not selected -%}
+          {{ empty }}
+        {%- else -%}
+          {%- for value, text in options if value in selected -%}
+            {{ text }}{{ ", " if not loop.last }}
+          {%- endfor -%}
+        {%- endif -%}
+      </span>
+      {% if selected %}<span class="ms-count">{{ selected | length }}</span>{% endif %}
+    </summary>
+    <div class="ms-menu">
+      {% for value, text in options %}
+      <label class="ms-opt">
+        <input type="checkbox" name="{{ name }}" value="{{ value }}"
+               {% if value in selected %}checked{% endif %}>
+        <span>{{ text }}</span>
+      </label>
+      {% endfor %}
+    </div>
+  </details>
+</div>
+{% endmacro %}
