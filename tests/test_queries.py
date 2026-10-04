@@ -138,6 +138,180 @@ def test_posted_after_hide_undated_excludes_null(tmp_path):
     assert {r["external_id"] for r in rows} == {"b"}  # 'c' now excluded too
 
 
+def test_list_jobs_source_accepts_multiple(tmp_path):
+    conn = _seed(tmp_path / "j.db", [
+        _job(external_id="a", source="wttj"),
+        _job(external_id="b", source="france_travail"),
+        _job(external_id="c", source="linkedin_email"),
+    ])
+    rows = queries.list_jobs(conn, source=["wttj", "linkedin_email"])
+    assert {r["external_id"] for r in rows} == {"a", "c"}
+
+
+def test_list_jobs_source_single_string_still_works(tmp_path):
+    """The one-value form stays valid — callers needn't wrap it in a list."""
+    conn = _seed(tmp_path / "j.db", [
+        _job(external_id="a", source="wttj"),
+        _job(external_id="b", source="france_travail"),
+    ])
+    assert len(queries.list_jobs(conn, source="wttj")) == 1
+
+
+def test_list_jobs_empty_sequence_means_no_filter(tmp_path):
+    conn = _seed(tmp_path / "j.db", [
+        _job(external_id="a", source="wttj"),
+        _job(external_id="b", source="france_travail"),
+    ])
+    assert len(queries.list_jobs(conn, source=[])) == 2
+
+
+def test_list_jobs_multi_filters_are_anded_together(tmp_path):
+    """Values inside one filter are OR'd; separate filters are AND'd."""
+    conn = _seed(tmp_path / "j.db", [
+        _job(external_id="a", source="wttj"),
+        _job(external_id="b", source="france_travail"),
+        _job(external_id="c", source="linkedin_email"),
+    ])
+    # Score only 'a' and 'b', then ask for (wttj OR linkedin) AND scored.
+    for ext in ("a", "b"):
+        row = conn.execute("SELECT id FROM jobs WHERE external_id=?", (ext,)).fetchone()
+        db.record_score(conn, row["id"], score_total=50.0, score_status="scored",
+                        score_json=json.dumps({"criteria_scores": {}}))
+    conn.commit()
+
+    rows = queries.list_jobs(
+        conn, source=["wttj", "linkedin_email"], score_status=["scored"]
+    )
+    assert {r["external_id"] for r in rows} == {"a"}  # 'b' wrong source, 'c' unscored
+
+
+def test_list_jobs_score_status_accepts_multiple(tmp_path):
+    conn = _seed(tmp_path / "j.db", [
+        _job(external_id="a"), _job(external_id="b"), _job(external_id="c"),
+    ])
+    marks = {"a": "scored", "b": "needs_review"}
+    for ext, status in marks.items():
+        row = conn.execute("SELECT id FROM jobs WHERE external_id=?", (ext,)).fetchone()
+        db.record_score(conn, row["id"], score_total=50.0, score_status=status,
+                        score_json=json.dumps({"criteria_scores": {}}))
+    conn.commit()
+
+    rows = queries.list_jobs(conn, score_status=["scored", "needs_review"])
+    assert {r["external_id"] for r in rows} == {"a", "b"}  # 'c' never scored
+
+
+def _set_seen(conn, external_id, ts):
+    """Force a row's first_seen_at, simulating an offer from an earlier batch.
+
+    ``upsert_jobs`` stamps 'now' for every insert, so tests that care about
+    ingestion *dates* have to rewrite it explicitly.
+    """
+    conn.execute("UPDATE jobs SET first_seen_at=? WHERE external_id=?", (ts, external_id))
+    conn.commit()
+
+
+def test_seen_after_filters_by_ingestion_date(tmp_path):
+    conn = _seed(tmp_path / "j.db", [_job(external_id="old"), _job(external_id="new")])
+    _set_seen(conn, "old", "2026-01-01T00:00:00+00:00")
+    _set_seen(conn, "new", "2026-08-15T10:00:00+00:00")
+
+    rows = queries.list_jobs(conn, seen_after="2026-08-01")
+    assert {r["external_id"] for r in rows} == {"new"}
+
+
+def test_seen_after_bare_date_includes_same_day_timestamps(tmp_path):
+    """A bare YYYY-MM-DD bound must catch offers ingested *during* that day.
+
+    Lexically "2026-08-15" < "2026-08-15T10:00:00+00:00", so the prefix compare
+    means "from the start of that day" — the behaviour a date picker implies.
+    """
+    conn = _seed(tmp_path / "j.db", [_job(external_id="a")])
+    _set_seen(conn, "a", "2026-08-15T10:00:00+00:00")
+    assert len(queries.list_jobs(conn, seen_after="2026-08-15")) == 1
+
+
+def test_seen_after_bound_is_inclusive_for_exact_timestamp(tmp_path):
+    """Passing a run's started_at selects that run's own intake (>=, not >)."""
+    conn = _seed(tmp_path / "j.db", [_job(external_id="a")])
+    _set_seen(conn, "a", "2026-08-15T10:00:00+00:00")
+    assert len(queries.list_jobs(conn, seen_after="2026-08-15T10:00:00+00:00")) == 1
+
+
+def _record_run(conn, started_at, counts, *, dry_run=0):
+    """Insert a runs-ledger row directly (counts already JSON-encoded or None)."""
+    conn.execute(
+        "INSERT INTO runs (started_at, finished_at, source_counts_json, dry_run) "
+        "VALUES (?, ?, ?, ?)",
+        (started_at, started_at, counts, dry_run),
+    )
+    conn.commit()
+
+
+def test_last_ingest_run_skips_other_stages(tmp_path):
+    """Every stage shares the runs ledger; only ingest rows may be returned."""
+    conn = db.connect(tmp_path / "j.db")
+    _record_run(conn, "2026-08-01T00:00:00+00:00",
+                json.dumps({"stage": "ingest", "wttj": {"new": 5}}))
+    # A LATER score run must not be mistaken for the last ingest.
+    _record_run(conn, "2026-08-02T00:00:00+00:00",
+                json.dumps({"stage": "score", "scored": 12}))
+
+    run = queries.last_ingest_run(conn)
+    assert run["started_at"] == "2026-08-01T00:00:00+00:00"
+    assert run["new_offers"] == 5
+
+
+def test_last_ingest_run_treats_absent_stage_as_ingest(tmp_path):
+    """Ingest predates the 'stage' key, so legacy rows lack it entirely."""
+    conn = db.connect(tmp_path / "j.db")
+    _record_run(conn, "2026-08-01T00:00:00+00:00",
+                json.dumps({"wttj": {"new": 3}, "france_travail": {"new": 4}}))
+    run = queries.last_ingest_run(conn)
+    assert run["new_offers"] == 7  # summed across sources
+
+
+def test_last_ingest_run_ignores_dry_runs(tmp_path):
+    conn = db.connect(tmp_path / "j.db")
+    _record_run(conn, "2026-08-01T00:00:00+00:00", json.dumps({"stage": "ingest", "w": {"new": 1}}))
+    _record_run(conn, "2026-08-05T00:00:00+00:00",
+                json.dumps({"stage": "ingest", "w": {"new": 9}}), dry_run=1)
+    assert queries.last_ingest_run(conn)["started_at"] == "2026-08-01T00:00:00+00:00"
+
+
+def test_last_ingest_run_skips_corrupt_blob(tmp_path):
+    """A corrupt blob says nothing about the stage, so it must be skipped.
+
+    Falling back to {} would make it look stage-less, i.e. a legacy ingest row —
+    which would pin the "new" view to a batch that ingested nothing.
+    """
+    conn = db.connect(tmp_path / "j.db")
+    _record_run(conn, "2026-08-01T00:00:00+00:00", json.dumps({"stage": "ingest", "w": {"new": 2}}))
+    _record_run(conn, "2026-08-02T00:00:00+00:00", "{not json at all")
+    run = queries.last_ingest_run(conn)
+    assert run["started_at"] == "2026-08-01T00:00:00+00:00" and run["new_offers"] == 2
+
+
+def test_last_ingest_run_accepts_null_blob_as_ingest(tmp_path):
+    """A NULL blob (crashed/legacy run) is stage-less, so it counts as ingest."""
+    conn = db.connect(tmp_path / "j.db")
+    _record_run(conn, "2026-08-01T00:00:00+00:00", None)
+    run = queries.last_ingest_run(conn)
+    assert run["started_at"] == "2026-08-01T00:00:00+00:00" and run["new_offers"] == 0
+
+
+def test_last_ingest_run_none_on_empty_ledger(tmp_path):
+    conn = db.connect(tmp_path / "j.db")
+    assert queries.last_ingest_run(conn) is None
+
+
+def test_last_ingest_run_counts_zero_when_nothing_new(tmp_path):
+    """A run that adds nothing is normal — it must report 0, not be skipped."""
+    conn = db.connect(tmp_path / "j.db")
+    _record_run(conn, "2026-08-01T00:00:00+00:00",
+                json.dumps({"stage": "ingest", "wttj": {"new": 0, "seen_again": 80}}))
+    assert queries.last_ingest_run(conn)["new_offers"] == 0
+
+
 def _seed_statuses(db_path):
     """Seed three offers with distinct filter_status verdicts."""
     conn = db.connect(db_path)

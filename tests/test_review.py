@@ -150,6 +150,39 @@ def test_list_jobs_disposition_filter(tmp_path):
     assert len(queries.list_jobs(conn, disposition=None)) == 2
 
 
+def test_list_jobs_disposition_accepts_multiple(tmp_path):
+    conn, ids = _seed(tmp_path / "j.db", [_job("a"), _job("b"), _job("c")])
+    db.upsert_review(conn, ids["a"], disposition="applied")
+    db.upsert_review(conn, ids["b"], disposition="to_review")
+    conn.commit()  # c unreviewed
+
+    rows = queries.list_jobs(conn, disposition=["applied", "to_review"])
+    assert {r["external_id"] for r in rows} == {"a", "b"}
+
+
+def test_list_jobs_disposition_mixes_unreviewed_with_real_values(tmp_path):
+    """The UNREVIEWED sentinel (a NULL check) must OR with real dispositions.
+
+    Selecting "Unreviewed" + "Applied" has to return both groups; a branch-based
+    implementation could only honour one of the two.
+    """
+    conn, ids = _seed(tmp_path / "j.db", [_job("a"), _job("b"), _job("c")])
+    db.upsert_review(conn, ids["a"], disposition="applied")
+    db.upsert_review(conn, ids["b"], disposition="not_interested")
+    conn.commit()  # c unreviewed
+
+    rows = queries.list_jobs(conn, disposition=[queries.UNREVIEWED, "applied"])
+    assert {r["external_id"] for r in rows} == {"a", "c"}  # 'b' excluded
+
+
+def test_list_jobs_disposition_empty_list_means_no_filter(tmp_path):
+    """An empty multi-select is "all", not "match nothing"."""
+    conn, ids = _seed(tmp_path / "j.db", [_job("a"), _job("b")])
+    db.upsert_review(conn, ids["a"], disposition="applied")
+    conn.commit()
+    assert len(queries.list_jobs(conn, disposition=[])) == 2
+
+
 def test_join_surfaces_review_in_hydrate(tmp_path):
     conn, ids = _seed(tmp_path / "j.db", [_job("a")])
     db.upsert_review(conn, ids["a"], disposition="applied", notes="n")
