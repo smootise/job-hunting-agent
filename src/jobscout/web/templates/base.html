@@ -1,11 +1,19 @@
 <!doctype html>
-<html lang="en">
+{# en-GB, not en: a native <input type="date"> takes its DISPLAY format from the
+   document/browser locale (the DOM value is always ISO YYYY-MM-DD, and no CSS or
+   attribute can override the rendering). Plain "en" makes Chrome show the US
+   mm/dd/yyyy; en-GB gives the dd/mm/yyyy the owner expects, with the UI text
+   still in English. #}
+<html lang="en-GB">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}Job Scout{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
   <script src="{{ url_for('static', path='htmx.min.js') }}" defer></script>
+  {# Renders the filter dates as dd/mm/yyyy regardless of browser/OS locale —
+     Firefox and Safari ignore the `lang` above for date inputs. #}
+  <script src="{{ url_for('static', path='eudate.js') }}" defer></script>
 </head>
 <body>
   <header class="topbar">

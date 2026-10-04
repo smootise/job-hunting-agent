@@ -106,11 +106,15 @@ def run_ingest(
                 on_progress(i, total)
     finally:
         if conn is not None and run_id is not None:
-            counts = {
+            # "stage" tags the run kind, the way every later stage does. Ingest
+            # predates the key, so historical ingest rows lack it and readers
+            # (queries.last_ingest_run) treat an absent stage as ingest too.
+            counts: dict[str, object] = {"stage": "ingest"}
+            counts.update({
                 name: {"new": o.new, "seen_again": o.seen_again,
                        "fetched": o.fetched, "failed": o.failed}
                 for name, o in summary.per_source.items()
-            }
+            })
             db.record_run_finish(conn, run_id, counts)
             conn.close()
 

@@ -1,0 +1,36 @@
+{# A dd/mm/yyyy date field: EU-formatted text box + native calendar button.
+
+   A native <input type="date"> can't be told what format to DISPLAY (the DOM
+   value is always ISO, and the rendering follows the browser/OS locale — Firefox
+   and Safari ignore the document's `lang` entirely). So the control is a pair:
+
+     * a visible text input the owner reads/types in dd/mm/yyyy — NOT named, so
+       it never reaches the server; and
+     * a hidden <input type="date"> that carries the ISO value and IS the named
+       field, keeping the server contract (`yyyy-mm-dd`, validated in the route)
+       exactly as it was.
+
+   static/eudate.js wires the two together and makes the button open the native
+   calendar. Without JS the hidden input is revealed, so the filter still works.
+
+   Params: name – submitted field name; label – visible label; value – ISO date
+   string (or "").
+#}
+{% macro datefield(name, label, value) %}
+<label class="eud" data-eudate>
+  {{ label }}
+  <span class="eud-row">
+    {# Pre-filled server-side so the EU text is correct before JS runs. #}
+    <input type="text" data-eudate-text
+           value="{{ value | eudate }}"
+           placeholder="dd/mm/yyyy"
+           inputmode="numeric"
+           autocomplete="off"
+           aria-label="{{ label }} (dd/mm/yyyy)">
+    <input type="date" name="{{ name }}" value="{{ value }}"
+           class="eud-hidden" tabindex="-1" aria-hidden="true">
+    <button type="button" data-eudate-open
+            class="eud-btn" title="Open calendar" aria-label="Open calendar">▤</button>
+  </span>
+</label>
+{% endmacro %}

@@ -173,8 +173,14 @@
   <div class="meta-grid" style="margin-bottom:1rem">
     <div><div class="k">Contract</div>{{ job.contract_type or '—' }}</div>
     <div><div class="k">Salary</div>{{ job.salary_text or '—' }}</div>
-    <div><div class="k">Posted</div>{{ job.posted_at | reltime }}</div>
-    <div><div class="k">First seen</div>{{ job.first_seen_at | reltime }}</div>
+    {# The exact date first (dd/mm/yyyy), with the interval after it — on a detail
+       page you usually want the real date, not just "3d ago". #}
+    <div><div class="k">Posted</div>
+      {% if job.posted_at %}{{ job.posted_at | eudate }} <span class="muted-inline">({{ job.posted_at | reltime }})</span>{% else %}—{% endif %}
+    </div>
+    <div><div class="k">First seen</div>
+      {{ job.first_seen_at | eudate }} <span class="muted-inline">({{ job.first_seen_at | reltime }})</span>
+    </div>
     <div><div class="k">Language</div>{{ job.lang or '—' }}</div>
     <div><div class="k">Link</div><a href="{{ job.url }}" target="_blank" rel="noopener noreferrer">View original posting ↗</a></div>
   </div>

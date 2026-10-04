@@ -1,55 +1,62 @@
 {% extends "base.html" %}
+{% import "offers/_multiselect.html" as ms %}
+{% import "offers/_datefield.html" as df %}
 {% block title %}Offers · Job Scout{% endblock %}
 {% block content %}
 <h1>Offers</h1>
+
+{# The "new since last ingest" shortcut. Deliberately a plain link OUTSIDE the
+   filter form, not a form control: the form submits on any change, so a `new`
+   field living inside it would re-apply the preset and clobber a manual date
+   edit. As a link it prefills the date controls and then gets out of the way —
+   touching any filter afterwards simply submits the form without `new`. #}
+{% if last_ingest %}
+<p class="shortcuts">
+  <a class="chip chip--action{% if showing_new %} chip--on{% endif %}" href="/offers?new=1">
+    New since last ingest
+  </a>
+  <span class="section-note">
+    last run {{ last_ingest.started_at | reltime }} · {{ last_ingest.new_offers }} new offer{{ 's' if last_ingest.new_offers != 1 }}
+  </span>
+</p>
+{% endif %}
+
+{# Say so when filters came from memory rather than the URL: an unexplained
+   narrow list is indistinguishable from an empty database. #}
+{% if restored_view %}
+<p class="restored-note">
+  Restored your last filters.
+  <a href="/offers?reset=1">Show all offers</a>
+</p>
+{% endif %}
 
 {# The controls GET /offers/table and swap just the table. hx-push-url keeps the
    address bar in sync so a full reload of /offers reproduces the same view. #}
 <form class="filters"
       hx-get="/offers/table"
       hx-target="#offers-table"
-      hx-trigger="change"
+      {# Small debounce: each checkbox click fires a change, so ticking three
+         boxes would otherwise issue three requests whose responses could land
+         out of order. hx-sync keeps only the latest in flight. #}
+      hx-trigger="change delay:250ms"
+      hx-sync="this:replace"
       hx-push-url="true">
-  <label>Status
-    <select name="filter_status">
-      <option value=""    {% if active.filter_status == '' %}selected{% endif %}>Active (hide rejected)</option>
-      <option value="all" {% if active.filter_status == 'all' %}selected{% endif %}>All (incl. rejected)</option>
-      <option value="passed"       {% if active.filter_status == 'passed' %}selected{% endif %}>Passed</option>
-      <option value="needs_review" {% if active.filter_status == 'needs_review' %}selected{% endif %}>Needs review</option>
-      <option value="rejected"     {% if active.filter_status == 'rejected' %}selected{% endif %}>Rejected only</option>
-    </select>
-  </label>
-  <label>Posted on/after
-    <input type="date" name="posted_after" value="{{ active.posted_after }}">
-  </label>
+  {# Marks a deliberate Status selection. Status is the one filter that starts
+     pre-checked (active only), so without this an absent param couldn't be told
+     apart from "the user unchecked everything". The form always submits it. #}
+  <input type="hidden" name="filter_status_set" value="1">
+  {{ ms.multiselect("filter_status", "Status", filter_statuses, active.filter_status) }}
+  {{ df.datefield("posted_after", "Posted on/after", active.posted_after) }}
+  {{ df.datefield("seen_after", "Added on/after", active.seen_after) }}
   <label class="check">
     <input type="checkbox" name="hide_undated" value="on" {% if active.hide_undated %}checked{% endif %}>
     Hide undated
   </label>
-  <label>Source
-    <select name="source">
-      <option value="" {% if not active.source %}selected{% endif %}>All</option>
-      {% for s in sources %}
-      <option value="{{ s }}" {% if active.source == s %}selected{% endif %}>{{ s }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>Score
-    <select name="score_status">
-      <option value="" {% if not active.score_status %}selected{% endif %}>All</option>
-      {% for value, label in score_statuses %}
-      <option value="{{ value }}" {% if active.score_status == value %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
-  </label>
-  <label>Review
-    <select name="disposition">
-      <option value="" {% if not active.disposition %}selected{% endif %}>All</option>
-      {% for value, label in disposition_filters %}
-      <option value="{{ value }}" {% if active.disposition == value %}selected{% endif %}>{{ label }}</option>
-      {% endfor %}
-    </select>
-  </label>
+  {# Checkbox dropdowns (see _multiselect.html). Nothing checked means "all";
+     picks within one control are OR'd, and the controls are AND'd together. #}
+  {{ ms.multiselect("source", "Source", sources, active.source) }}
+  {{ ms.multiselect("score_status", "Score", score_statuses, active.score_status) }}
+  {{ ms.multiselect("disposition", "Review", disposition_filters, active.disposition) }}
   <label>Sort by
     <select name="sort">
       <option value="score_total"     {% if active.sort == 'score_total' %}selected{% endif %}>Overall score</option>
@@ -72,13 +79,15 @@
     </select>
   </label>
   {% if not is_default_view %}
-  {# A plain link back to /offers resets to the default view. #}
-  <a class="clear-filters" href="/offers">Clear filters</a>
+  {# reset=1 also FORGETS the saved view — a bare /offers would just restore it. #}
+  <a class="clear-filters" href="/offers?reset=1">Clear filters</a>
   {% endif %}
 </form>
 <p class="section-note">
   Defaults to offers posted in the last 30 days, rejected hidden.
   LinkedIn offers have no post date — shown unless you check “Hide undated”.
+  “Added on/after” filters by ingestion date instead, which every offer has.
+  Status / Source / Score / Review each accept several values (none checked = all).
 </p>
 
 <div id="offers-table">

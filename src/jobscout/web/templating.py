@@ -34,6 +34,24 @@ def _badge_class(status: str | None) -> str:
     return _BADGE_CLASSES.get(status or "", "badge--muted")
 
 
+def _eudate(value: str | None) -> str:
+    """Format an ISO-8601 timestamp as ``dd/mm/yyyy`` (the owner's convention).
+
+    Used for the exact-date tooltips beside the relative "3d ago" times, and
+    anywhere a literal date reads better than an interval. Best-effort like
+    ``_reltime``: an unparseable value comes back unchanged rather than raising.
+
+    (The date *pickers* can't use this — a native ``<input type="date">`` formats
+    itself from the document locale, which is why ``base.html`` sets ``en-GB``.)
+    """
+    if not value:
+        return ""
+    try:
+        return datetime.fromisoformat(value).strftime("%d/%m/%Y")
+    except ValueError:
+        return value
+
+
 def _round1(value: Any) -> str:
     """Render a number to one decimal, or an em dash when there's nothing."""
     if value is None:
@@ -89,4 +107,5 @@ def build_templates() -> Jinja2Templates:
     templates.env.filters["round1"] = _round1
     templates.env.filters["pct"] = _pct
     templates.env.filters["reltime"] = _reltime
+    templates.env.filters["eudate"] = _eudate
     return templates
